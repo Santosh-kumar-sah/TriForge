@@ -1,7 +1,7 @@
 import json
 import requests
 from typing import Tuple, Dict, Any, Generator
-from app.providers.base import BaseProvider
+from app.providers.base import BaseProvider, sanitize_error_msg
 from app.config import settings
 
 
@@ -55,8 +55,8 @@ class GroqProvider(BaseProvider):
             return content, prompt_tokens, completion_tokens
 
         except Exception as e:
-            # Graceful fallback — never crash the routing pipeline
-            return f"Error querying Groq model ({model}): {str(e)}", 0, 0
+            # Graceful fallback — never crash or leak API key in error message
+            return f"Error querying Groq model ({model}): {sanitize_error_msg(e)}", 0, 0
 
     def generate_stream(
         self, prompt: str, model: str, options: Dict[str, Any] = None
@@ -126,7 +126,7 @@ class GroqProvider(BaseProvider):
 
         except Exception as e:
             yield {
-                "text": f"\n[Stream Error: {str(e)}]",
+                "text": f"\n[Stream Error: {sanitize_error_msg(e)}]",
                 "prompt_tokens": 0,
                 "completion_tokens": 0,
                 "done": True,

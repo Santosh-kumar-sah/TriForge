@@ -1,7 +1,7 @@
 import json
 import requests
 from typing import Tuple, Dict, Any, Generator
-from app.providers.base import BaseProvider
+from app.providers.base import BaseProvider, sanitize_error_msg
 from app.config import settings
 
 class RemoteFireworksProvider(BaseProvider):
@@ -40,7 +40,7 @@ class RemoteFireworksProvider(BaseProvider):
             completion_tokens = usage.get("completion_tokens", 0)
             return content, prompt_tokens, completion_tokens
         except Exception as e:
-            return f"Error querying Fireworks AI remote model ({model}): {str(e)}", 0, 0
+            return f"Error querying Fireworks AI remote model ({model}): {sanitize_error_msg(e)}", 0, 0
 
     def generate_stream(self, prompt: str, model: str, options: Dict[str, Any] = None) -> Generator[Dict[str, Any], None, None]:
         active_key = (options.get("api_key") if options else None) or self.api_key
@@ -104,7 +104,7 @@ class RemoteFireworksProvider(BaseProvider):
                     continue
         except Exception as e:
             yield {
-                "text": f"\n[Stream Error: {str(e)}]",
+                "text": f"\n[Stream Error: {sanitize_error_msg(e)}]",
                 "prompt_tokens": 0,
                 "completion_tokens": 0,
                 "done": True

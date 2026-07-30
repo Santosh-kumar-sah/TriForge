@@ -1,5 +1,22 @@
 from abc import ABC, abstractmethod
 from typing import Tuple, Dict, Any, Generator
+import re
+
+KEY_PATTERNS = re.compile(
+    r'(gsk_[A-Za-z0-9_-]+|fw_[A-Za-z0-9_-]+|sk-ant-[A-Za-z0-9_-]+|sk-[A-Za-z0-9_-]+|key-[A-Za-z0-9_-]+|Bearer\s+[A-Za-z0-9._-]+)',
+    re.IGNORECASE
+)
+
+def sanitize_error_msg(msg: Any) -> str:
+    """
+    Sanitizes error messages to ensure API keys and Bearer tokens are never
+    leaked to clients or logged in plain text.
+    """
+    if not msg:
+        return ""
+    clean_str = str(msg)
+    return KEY_PATTERNS.sub("[REDACTED_API_KEY]", clean_str)
+
 
 class BaseProvider(ABC):
     """

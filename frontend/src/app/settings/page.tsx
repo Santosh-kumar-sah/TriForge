@@ -45,19 +45,6 @@ export default function SettingsPage() {
     together_api_key: ""
   });
 
-  const [showKeys, setShowKeys] = useState<{ [key: string]: boolean }>({
-    fireworks: false,
-    openai: false,
-    anthropic: false,
-    gemini: false,
-    groq: false,
-    together: false,
-  });
-
-  const toggleKeyVisibility = (key: string) => {
-    setShowKeys(prev => ({ ...prev, [key]: !prev[key] }));
-  };
-
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -151,7 +138,7 @@ export default function SettingsPage() {
           <div className="bg-emerald-950/20 border border-emerald-800/40 rounded-lg p-3 text-xs text-emerald-300/90 flex items-start gap-2.5">
             <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
             <div>
-              <span className="font-bold text-white">Privacy Protection:</span> Configured API keys are stored safely on the backend server and are strictly hidden from visitors. To update a key, type or paste a new value into the field.
+              <span className="font-bold text-white">Strict Key Privacy Protection:</span> Configured API keys are encrypted & saved exclusively on the backend server. Keys are strictly masked as <code className="text-emerald-400">••••••••</code> and can never be viewed, inspected, or unmasked by website visitors.
             </div>
           </div>
           
@@ -165,8 +152,8 @@ export default function SettingsPage() {
               { id: "together", name: "Together AI API Key (Optional)", key: "together_api_key", placeholder: "Paste your Together API key here..." },
             ].map(field => {
               const fieldKey = field.key as keyof SettingsData;
-              const val = (formData[fieldKey] as string) || "";
-              const isConfigured = val === "••••••••";
+              const rawVal = (formData[fieldKey] as string) || "";
+              const isConfigured = rawVal === "••••••••";
 
               return (
                 <div key={field.id}>
@@ -175,30 +162,18 @@ export default function SettingsPage() {
                     {isConfigured && (
                       <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-950/40 border border-emerald-500/20 px-2 py-0.5 rounded flex items-center gap-1">
                         <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                        Configured & Hidden
+                        Configured & Server Shielded
                       </span>
                     )}
                   </div>
-                  <div className="relative">
+                  <div>
                     <input 
-                      type={showKeys[field.id] ? "text" : "password"} 
-                      value={val} 
-                      onFocus={() => {
-                        if (isConfigured) {
-                          setFormData(prev => ({ ...prev, [fieldKey]: "" }));
-                        }
-                      }}
+                      type="password" 
+                      value={rawVal === "••••••••" ? "" : rawVal} 
                       onChange={(e) => setFormData({ ...formData, [fieldKey]: e.target.value })}
-                      placeholder={isConfigured ? "•••••••• (Click to update key)" : field.placeholder}
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 pr-10 text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500 font-mono"
+                      placeholder={isConfigured ? "•••••••• (Configured on Server — Type to update)" : field.placeholder}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500 font-mono"
                     />
-                    <button
-                      type="button"
-                      onClick={() => toggleKeyVisibility(field.id)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 focus:outline-none"
-                    >
-                      {showKeys[field.id] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
                   </div>
                 </div>
               );
