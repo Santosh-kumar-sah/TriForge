@@ -68,62 +68,20 @@ export default function Dashboard() {
     fetchAnalytics();
   }, []);
 
-  if (loading) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center min-h-screen text-zinc-400">
-        <RefreshCw className="w-8 h-8 animate-spin text-amber-500 mb-3" />
-        <p className="text-sm font-semibold tracking-wide">Compiling analytics metrics...</p>
-      </div>
-    );
-  }
-
-  if (error || !data) {
-    return (
-      <div className="p-8 max-w-7xl mx-auto space-y-6">
-        <div className="flex justify-between items-center border-b border-zinc-800 pb-5">
-          <div>
-            <h1 className="text-3xl font-extrabold text-white tracking-tight">Analytics Dashboard</h1>
-            <p className="text-zinc-400 text-sm mt-1">Real-time Hybrid router performance monitoring</p>
-          </div>
-          <button 
-            onClick={fetchAnalytics}
-            className="bg-zinc-800 hover:bg-zinc-700 text-white font-semibold text-xs px-4 py-2 rounded-lg flex items-center gap-2 border border-zinc-700 transition"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Retry Connection</span>
-          </button>
-        </div>
-
-        <div className="bg-red-950/20 border border-red-800/80 rounded-xl p-6 flex gap-4 items-start text-red-200">
-          <AlertCircle className="w-6 h-6 shrink-0 text-red-500" />
-          <div>
-            <h3 className="font-bold text-red-400 text-base">Backend Connection Failed</h3>
-            <p className="text-sm text-red-300/80 mt-1 leading-relaxed">
-              Could not fetch data from the FastAPI server. Please check that your backend service is running locally on port 8000 (e.g. by running uvicorn) or inside the Docker environment.
-            </p>
-            <p className="text-xs text-red-400/70 mt-3 font-mono">
-              Error details: {error}
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   const {
-    total_requests,
-    local_requests,
-    remote_requests,
-    escalated_requests,
-    tokens_spent_remote,
-    tokens_spent_local,
-    tokens_saved_local,
-    estimated_cost_usd,
-    estimated_savings_usd,
-    cache_hit_rate,
-    average_latency_ms,
-    daily_stats
-  } = data;
+    total_requests = 0,
+    local_requests = 0,
+    remote_requests = 0,
+    escalated_requests = 0,
+    tokens_spent_remote = 0,
+    tokens_spent_local = 0,
+    tokens_saved_local = 0,
+    estimated_cost_usd = 0,
+    estimated_savings_usd = 0,
+    cache_hit_rate = 0,
+    average_latency_ms = 0,
+    daily_stats = []
+  } = data || {};
 
   // Pie chart data
   const pieData = [
@@ -145,14 +103,46 @@ export default function Dashboard() {
         </div>
         <button 
           onClick={fetchAnalytics}
-          className="bg-zinc-800 hover:bg-zinc-700 text-white font-semibold text-xs px-4 py-2.5 rounded-lg flex items-center gap-2 border border-zinc-700 transition-all active:scale-95"
+          disabled={loading}
+          className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-white font-semibold text-xs px-4 py-2.5 rounded-lg flex items-center gap-2 border border-zinc-700 transition-all active:scale-95"
         >
-          <RefreshCw className="w-3.5 h-3.5" />
-          <span>Refresh Data</span>
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+          <span>{loading ? "Compiling..." : "Refresh Data"}</span>
         </button>
       </div>
 
-      {!hasData ? (
+      {loading && !data ? (
+        <div className="space-y-6 animate-pulse">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 h-32 flex flex-col justify-between">
+                <div className="h-3 bg-zinc-800 rounded w-1/2"></div>
+                <div className="h-8 bg-zinc-800 rounded w-3/4"></div>
+                <div className="h-2 bg-zinc-800/60 rounded w-2/3"></div>
+              </div>
+            ))}
+          </div>
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 h-44"></div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 h-20"></div>
+            ))}
+          </div>
+        </div>
+      ) : error || !data ? (
+        <div className="bg-red-950/20 border border-red-800/80 rounded-xl p-6 flex gap-4 items-start text-red-200">
+          <AlertCircle className="w-6 h-6 shrink-0 text-red-500" />
+          <div>
+            <h3 className="font-bold text-red-400 text-base">Backend Connection Failed</h3>
+            <p className="text-sm text-red-300/80 mt-1 leading-relaxed">
+              Could not fetch data from the FastAPI server. Please check that your backend service is running locally on port 8000 (e.g. by running uvicorn) or inside the Docker environment.
+            </p>
+            <p className="text-xs text-red-400/70 mt-3 font-mono">
+              Error details: {error}
+            </p>
+          </div>
+        </div>
+      ) : !hasData ? (
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-12 text-center max-w-2xl mx-auto space-y-4">
           <Zap className="w-12 h-12 text-amber-500 mx-auto animate-pulse" />
           <h3 className="text-xl font-bold text-white">No Statistics Found</h3>

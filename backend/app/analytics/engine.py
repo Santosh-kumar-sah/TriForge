@@ -1,4 +1,4 @@
-from sqlalchemy import func
+from sqlalchemy import func, case
 from sqlalchemy.orm import Session
 from app.database.models import RequestModel, ResponseModel
 from datetime import datetime, timedelta
@@ -9,7 +9,18 @@ class AnalyticsEngine:
         self.remote_cost_per_token = 0.20 / 1_000_000  # $0.20 per 1M tokens
 
     def get_summary(self, db: Session) -> dict:
-        total = db.query(RequestModel).count()
+        # Single aggregated query for overall metrics
+        agg = db.query(
+            func.count(RequestModel.id).label("total"),
+            func.sum(case((RequestModel.routed_to == "local", 1), else_=0)).label("local_reqs"),
+            func.sum(case((RequestModel.routed_to == "remote", 1), else_=0)).label("remote_reqs"),
+            func.sum(case((RequestModel.final_route.like("%ESCALATED%"), 1), else_=0)).label("escalated_reqs"),
+            func.sum(case((RequestModel.final_route.like("%REMOTE%"), RequestModel.prompt_tokens + RequestModel.completion_tokens), else_=0)).label("r_spent"),
+            func.sum(case((RequestModel.final_route == "LOCAL", RequestModel.prompt_tokens + RequestModel.completion_tokens), else_=0)).label("l_spent"),
+            func.sum(RequestModel.latency_ms).label("total_latency")
+        ).first()
+
+        total = (agg.total or 0) if agg else 0
         if total == 0:
             return {
                 "total_requests": 0,
@@ -29,72 +40,36 @@ class AnalyticsEngine:
                 "daily_stats": []
             }
 
-        local_reqs = db.query(RequestModel).filter(RequestModel.routed_to == "local").count()
-        remote_reqs = db.query(RequestModel).filter(RequestModel.routed_to == "remote").count()
-        
-        # Escalated requests are routed_to == "local" but final_route contains "ESCALATED"
-        escalated_reqs = db.query(RequestModel).filter(
-            RequestModel.final_route.like("%ESCALATED%")
-        ).count()
+        local_reqs = int(agg.local_reqs or 0)
+        remote_reqs = int(agg.remote_reqs or 0)
+        escalated_reqs = int(agg.escalated_reqs or 0)
+        r_spent = int(agg.r_spent or 0)
+        l_spent = int(agg.l_spent or 0)
 
-        # Token metrics
-        totals = db.query(
-            func.sum(RequestModel.prompt_tokens).label("prompt"),
-            func.sum(RequestModel.completion_tokens).label("completion"),
-            func.sum(RequestModel.latency_ms).label("latency")
-        ).first()
+        # Cached requests count and saved tokens
+        cached_stats = db.query(
+            func.count(ResponseModel.id).label("count"),
+            func.sum(RequestModel.prompt_tokens + RequestModel.completion_tokens).label("saved_tokens")
+        ).join(RequestModel, ResponseModel.request_id == RequestModel.id)\
+         .filter(ResponseModel.is_cached == True).first()
 
-        # Remote tokens
-        remote_totals = db.query(
-            func.sum(RequestModel.prompt_tokens).label("prompt"),
-            func.sum(RequestModel.completion_tokens).label("completion")
-        ).filter(RequestModel.final_route.like("%REMOTE%")).first()
-
-        # Local tokens
-        local_totals = db.query(
-            func.sum(RequestModel.prompt_tokens).label("prompt"),
-            func.sum(RequestModel.completion_tokens).label("completion")
-        ).filter(RequestModel.final_route == "LOCAL").first()
-
-        r_prompt = (remote_totals.prompt or 0) if remote_totals else 0
-        r_completion = (remote_totals.completion or 0) if remote_totals else 0
-        r_spent = r_prompt + r_completion
-
-        l_prompt = (local_totals.prompt or 0) if local_totals else 0
-        l_completion = (local_totals.completion or 0) if local_totals else 0
-        l_spent = l_prompt + l_completion
-
-        # Cached requests count
-        cached_count = db.query(ResponseModel).filter(ResponseModel.is_cached == True).count()
+        cached_count = (cached_stats.count or 0) if cached_stats else 0
+        cache_saved_tokens = (cached_stats.saved_tokens or 0) if cached_stats else 0
         cache_hit_rate = (cached_count / total) * 100
 
-        # Saved tokens:
-        # 1. Any request resolved purely via "LOCAL" (prompt + completion saved)
-        # 2. Any request resolved via Cache (since it saved querying remote or local)
-        local_saved_query = db.query(
-            func.sum(RequestModel.prompt_tokens + RequestModel.completion_tokens)
-        ).filter(RequestModel.final_route == "LOCAL").scalar() or 0
-        
-        cache_saved_query = db.query(
-            func.sum(RequestModel.prompt_tokens + RequestModel.completion_tokens)
-        ).join(ResponseModel).filter(ResponseModel.is_cached == True).scalar() or 0
-
-        tokens_saved = local_saved_query + cache_saved_query
+        tokens_saved = l_spent + cache_saved_tokens
 
         # Cost and Savings Calculations
         est_cost = r_spent * self.remote_cost_per_token
         est_savings = tokens_saved * self.remote_cost_per_token
 
-        # Cloud 70B datacenter inference averages ~0.0035 kWh per 1k tokens (including server cooling & PUE) vs ~0.00015 kWh local NPU/GPU
-        # Grid carbon intensity average ~0.385 kg CO2 per kWh
         energy_saved_kwh = (tokens_saved / 1000.0) * 0.0035
         co2_saved_kg = energy_saved_kwh * 0.385
         phone_charges_saved = int(energy_saved_kwh * 80)
 
-        avg_latency = (totals.latency or 0) / total if totals else 0.0
+        avg_latency = (agg.total_latency or 0.0) / total if agg else 0.0
 
-        # Retrieve last 7 days daily statistics for charting
-        # Use func.date() which works reliably with SQLite (returns strings) and Postgres
+        # Last 7 days daily statistics via single aggregated query
         seven_days_ago = datetime.utcnow() - timedelta(days=7)
         
         try:
@@ -102,7 +77,12 @@ class AnalyticsEngine:
                 func.date(RequestModel.timestamp).label("day"),
                 func.count(RequestModel.id).label("count"),
                 func.sum(RequestModel.latency_ms).label("latency_sum"),
-                func.sum(RequestModel.prompt_tokens + RequestModel.completion_tokens).label("tokens_sum")
+                func.sum(
+                    case((RequestModel.final_route.like("%REMOTE%"), RequestModel.prompt_tokens + RequestModel.completion_tokens), else_=0)
+                ).label("remote_tokens"),
+                func.sum(
+                    case((RequestModel.final_route == "LOCAL", RequestModel.prompt_tokens + RequestModel.completion_tokens), else_=0)
+                ).label("local_tokens")
             ).filter(RequestModel.timestamp >= seven_days_ago)\
              .group_by(func.date(RequestModel.timestamp))\
              .order_by(func.date(RequestModel.timestamp))\
@@ -114,46 +94,11 @@ class AnalyticsEngine:
         for rec in daily_records:
             if rec.day is None:
                 continue
-            
-            # rec.day is a string from func.date() in SQLite (e.g., "2026-07-09")
-            day_str = str(rec.day) if rec.day else ""
+            day_str = str(rec.day)
             count = rec.count or 0
             avg_day_latency = (rec.latency_sum / count) if count > 0 else 0.0
-            
-            # Estimate daily remote tokens to get daily cost
-            try:
-                daily_r_tokens = db.query(
-                    func.sum(RequestModel.prompt_tokens + RequestModel.completion_tokens)
-                ).filter(
-                    func.date(RequestModel.timestamp) == rec.day,
-                    RequestModel.final_route.like("%REMOTE%")
-                ).scalar() or 0
-            except Exception:
-                daily_r_tokens = 0
-            daily_cost = daily_r_tokens * self.remote_cost_per_token
-
-            # Daily savings from local/cached
-            try:
-                daily_saved_tokens = db.query(
-                    func.sum(RequestModel.prompt_tokens + RequestModel.completion_tokens)
-                ).filter(
-                    func.date(RequestModel.timestamp) == rec.day,
-                    RequestModel.final_route == "LOCAL"
-                ).scalar() or 0
-            except Exception:
-                daily_saved_tokens = 0
-            
-            try:
-                daily_saved_cached = db.query(
-                    func.sum(RequestModel.prompt_tokens + RequestModel.completion_tokens)
-                ).join(ResponseModel).filter(
-                    func.date(RequestModel.timestamp) == rec.day,
-                    ResponseModel.is_cached == True
-                ).scalar() or 0
-            except Exception:
-                daily_saved_cached = 0
-            
-            daily_savings = (daily_saved_tokens + daily_saved_cached) * self.remote_cost_per_token
+            daily_cost = (rec.remote_tokens or 0) * self.remote_cost_per_token
+            daily_savings = (rec.local_tokens or 0) * self.remote_cost_per_token
 
             daily_stats.append({
                 "date": day_str,
@@ -180,4 +125,3 @@ class AnalyticsEngine:
             "phone_charges_saved": phone_charges_saved,
             "daily_stats": daily_stats
         }
-
