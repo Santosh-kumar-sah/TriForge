@@ -138,7 +138,7 @@ export default function SettingsPage() {
           <div className="bg-emerald-950/20 border border-emerald-800/40 rounded-lg p-3 text-xs text-emerald-300/90 flex items-start gap-2.5">
             <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
             <div>
-              <span className="font-bold text-white">Strict Key Privacy Protection:</span> Configured API keys are encrypted & saved exclusively on the backend server. Keys are strictly masked as <code className="text-emerald-400">••••••••</code> and can never be viewed, inspected, or unmasked by website visitors.
+              <span className="font-bold text-white">Demo Configuration:</span> This application currently uses demo API keys for personal testing. For your own deployment, replace them with your own API keys. Your keys remain private and are never exposed to other users.
             </div>
           </div>
           
