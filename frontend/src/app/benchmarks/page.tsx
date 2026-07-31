@@ -17,6 +17,9 @@ import {
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from "recharts";
+import { FadeInUp } from "@/components/MotionWrapper";
+import { TiltCard } from "@/components/TiltCard";
+import { MotionButton } from "@/components/MotionButton";
 
 interface BenchmarkRunResult {
   accuracy: number;
@@ -201,23 +204,23 @@ Generated automatically by TriForge Benchmark Harness
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8">
       {/* Header */}
-      <div className="flex justify-between items-center border-b border-zinc-800 pb-5">
+      <FadeInUp className="flex justify-between items-center border-b border-zinc-800 pb-5">
         <div>
           <h1 className="text-3xl font-extrabold text-white tracking-tight">Benchmark Harness</h1>
           <p className="text-zinc-400 text-sm mt-1">Run automatic sweeps comparing pure local, remote, and hybrid routing</p>
         </div>
-        <button 
+        <MotionButton 
           onClick={() => fetchBenchmarks()}
           disabled={loading || running}
-          className="bg-zinc-800 hover:bg-zinc-700 text-white font-semibold text-xs px-4 py-2.5 rounded-lg flex items-center gap-2 border border-zinc-700 transition"
+          className="bg-zinc-800 hover:bg-zinc-700 text-white font-semibold text-xs px-4 py-2.5 rounded-lg flex items-center gap-2 border border-zinc-700 shadow-sm"
         >
-          <RefreshCw className="w-3.5 h-3.5" />
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
           <span>Refresh Runs</span>
-        </button>
-      </div>
+        </MotionButton>
+      </FadeInUp>
 
       {/* Control Panel */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-lg space-y-4">
+      <FadeInUp transition={{ duration: 0.4, delay: 0.1 }} className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-lg space-y-4">
         <h3 className="font-bold text-sm text-white uppercase tracking-wider flex items-center gap-2">
           <Play className="w-4 h-4 text-amber-500 fill-current" />
           Run Benchmarks Sweep
@@ -246,10 +249,10 @@ Generated automatically by TriForge Benchmark Harness
             />
           </div>
           <div className="flex items-end">
-            <button
+            <MotionButton
               onClick={triggerBenchmark}
               disabled={running || loading}
-              className="w-full bg-gradient-to-r from-amber-500 to-red-500 hover:from-amber-600 hover:to-red-600 disabled:from-zinc-800 disabled:to-zinc-800 text-white font-semibold text-xs p-3 rounded-lg flex items-center justify-center gap-2 shadow-lg shadow-amber-500/10 transition active:scale-95"
+              className="w-full bg-gradient-to-r from-amber-500 to-red-500 hover:from-amber-600 hover:to-red-600 disabled:from-zinc-800 disabled:to-zinc-800 text-white font-semibold text-xs p-3 rounded-lg flex items-center justify-center gap-2 shadow-lg shadow-amber-500/10"
             >
               {running ? (
                 <>
@@ -262,7 +265,7 @@ Generated automatically by TriForge Benchmark Harness
                   <span>Execute Benchmark Sweep</span>
                 </>
               )}
-            </button>
+            </MotionButton>
           </div>
         </div>
 
@@ -271,7 +274,7 @@ Generated automatically by TriForge Benchmark Harness
             {error}
           </p>
         )}
-      </div>
+      </FadeInUp>
 
       {loading && history.length === 0 ? (
         <div className="flex flex-col items-center justify-center p-12 text-zinc-500">

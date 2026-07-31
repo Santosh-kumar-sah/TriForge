@@ -439,6 +439,25 @@ export default function ChatPage() {
               );
             })
           )}
+          
+          {loading && (
+            <div className="flex gap-4 p-4 rounded-xl bg-zinc-900/60 border border-amber-500/30 max-w-3xl animate-pulse shadow-lg shadow-amber-500/5">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center shrink-0">
+                <Bot className="w-4 h-4 text-amber-400 animate-spin" />
+              </div>
+              <div className="space-y-2 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-amber-400 tracking-wide">TriForge Router Engine</span>
+                  <span className="text-[10px] text-zinc-400 bg-amber-950/40 border border-amber-500/20 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                    Analyzing intent & sampling models...
+                  </span>
+                </div>
+                <div className="h-3 bg-zinc-800 rounded w-3/4"></div>
+                <div className="h-3 bg-zinc-800/60 rounded w-1/2"></div>
+              </div>
+            </div>
+          )}
+
           <div ref={messagesEndRef} />
         </div>
 
