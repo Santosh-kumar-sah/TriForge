@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # Local Ollama Config (kept for local dev fallback only)
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    DEFAULT_LOCAL_MODEL: str = "llama-3.1-8b-instant"
+    DEFAULT_LOCAL_MODEL: str = "groq/compound-mini"
 
     # API Keys & Remote Configurations
     FIREWORKS_API_KEY: str = ""
@@ -30,11 +30,10 @@ class Settings(BaseSettings):
     TOGETHER_API_KEY: str = ""
 
     # Selected/Active Models
-    # Local model: Groq's fast free Llama 3.1 8B (replaces Ollama)
-    ACTIVE_LOCAL_MODEL: str = "llama-3.1-8b-instant"
-    # Remote model: Groq's powerful Llama 3.3 70B (default if no Fireworks key)
-    # Override with Fireworks/OpenAI model if those keys are set
-    ACTIVE_REMOTE_MODEL: str = "llama-3.3-70b-versatile"
+    # Local model: Groq's fast free model
+    ACTIVE_LOCAL_MODEL: str = "groq/compound-mini"
+    # Remote model: Groq's powerful compound model
+    ACTIVE_REMOTE_MODEL: str = "groq/compound"
 
     # Routing Logic Settings
     DEFAULT_CONSISTENCY_THRESHOLD: float = 0.8

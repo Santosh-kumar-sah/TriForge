@@ -59,7 +59,7 @@ def resolve_remote_model(model: str) -> str:
             or settings.FIREWORKS_API_KEY.strip() == ""
         )
         if is_missing:
-            return "llama-3.3-70b-versatile"
+            return "groq/compound"
             
     # 2. OpenAI Check
     elif "gpt" in model_lower or "text-davinci" in model_lower:
@@ -70,7 +70,7 @@ def resolve_remote_model(model: str) -> str:
             or settings.OPENAI_API_KEY.strip() == ""
         )
         if is_missing:
-            return "llama-3.3-70b-versatile"
+            return "groq/compound"
             
     # 3. Anthropic Check
     elif "claude" in model_lower:
@@ -81,7 +81,7 @@ def resolve_remote_model(model: str) -> str:
             or settings.ANTHROPIC_API_KEY.strip() == ""
         )
         if is_missing:
-            return "llama-3.3-70b-versatile"
+            return "groq/compound"
             
     return model
 
@@ -504,15 +504,13 @@ def get_supported_models():
     """
     return {
         "local": [
-            {"id": "llama-3.1-8b-instant", "name": "Llama 3.1 8B Instant (Groq — Recommended)"},
-            {"id": "llama3-8b-8192", "name": "Llama 3 8B (Groq)"},
-            {"id": "gemma2-9b-it", "name": "Gemma 2 9B (Groq)"},
-            {"id": "mixtral-8x7b-32768", "name": "Mixtral 8x7B (Groq)"}
+            {"id": "groq/compound-mini", "name": "Groq Compound Mini (Recommended)"},
+            {"id": "openai/gpt-oss-20b", "name": "GPT-OSS 20B (Groq)"},
+            {"id": "qwen/qwen3.6-27b", "name": "Qwen 3.6 27B (Groq)"}
         ],
         "remote": [
-            {"id": "llama-3.3-70b-versatile", "name": "Llama 3.3 70B Versatile (Groq — Recommended)"},
-            {"id": "accounts/fireworks/models/llama-v3p1-70b-instruct", "name": "Llama 3.1 70B (Fireworks)"},
-            {"id": "accounts/fireworks/models/llama-v3p1-8b-instruct", "name": "Llama 3.1 8B (Fireworks)"},
+            {"id": "groq/compound", "name": "Groq Compound (Recommended)"},
+            {"id": "openai/gpt-oss-120b", "name": "GPT-OSS 120B (Groq)"},
             {"id": "gpt-4o-mini", "name": "GPT-4o Mini (OpenAI)"},
             {"id": "gpt-4o", "name": "GPT-4o (OpenAI)"},
             {"id": "claude-3-5-sonnet-20240620", "name": "Claude 3.5 Sonnet (Anthropic)"}
