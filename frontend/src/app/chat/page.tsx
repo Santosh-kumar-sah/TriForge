@@ -35,6 +35,8 @@ interface Message {
   cost?: number;
   confidence?: number;
   draft?: string;
+  intent?: string;
+  compute_backend?: string;
 }
 
 export default function ChatPage() {
@@ -441,15 +443,24 @@ export default function ChatPage() {
                         {renderMessageContent(msg.text)}
                         {msg.route && (
                           <div className="mt-3 pt-2.5 border-t border-zinc-800/80 flex flex-wrap items-center gap-2 text-[11px]">
-                            <span className="bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 text-zinc-400 font-semibold flex items-center gap-1 shadow-sm">
-                              <Cpu className="w-3 h-3 text-amber-400" />
-                              Hardware: <span className="text-white font-bold">{computeBackend}</span>
+                            <span className="bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 text-zinc-300 font-semibold flex items-center gap-1.5 shadow-sm">
+                              <span className={`w-1.5 h-1.5 rounded-full ${msg.route.includes("ESCALATED") ? "bg-red-400" : msg.route.includes("REMOTE") ? "bg-blue-400" : "bg-emerald-400"}`} />
+                              Routed to <strong className="text-white uppercase">{msg.route}</strong>
                             </span>
                             <span className="bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 text-zinc-400 font-semibold shadow-sm">
-                              Confidence: <span className="text-emerald-400 font-bold">{(msg.confidence ?? 1.0).toFixed(2)}</span>
+                              confidence <strong className="text-emerald-400">{(msg.confidence ?? 1.0).toFixed(2)}</strong>
+                            </span>
+                            {msg.intent && (
+                              <span className="bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 text-zinc-400 font-semibold shadow-sm">
+                                intent: <strong className="text-amber-400">{msg.intent}</strong>
+                              </span>
+                            )}
+                            <span className="bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 text-zinc-400 font-semibold flex items-center gap-1 shadow-sm">
+                              <Cpu className="w-3 h-3 text-zinc-500" />
+                              <strong className="text-zinc-300">{msg.compute_backend || computeBackend}</strong>
                             </span>
                             {msg.reason && (
-                              <span className="text-zinc-400 truncate max-w-md italic bg-zinc-950/60 px-2 py-0.5 rounded border border-zinc-850 shadow-sm" title={msg.reason}>
+                              <span className="text-zinc-400 truncate max-w-md italic bg-zinc-950/60 px-2.5 py-0.5 rounded border border-zinc-850 shadow-sm cursor-help hover:text-zinc-200 transition" title={msg.reason}>
                                 {msg.reason}
                               </span>
                             )}

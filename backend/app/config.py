@@ -37,6 +37,8 @@ class Settings(BaseSettings):
 
     # Routing Logic Settings
     DEFAULT_CONSISTENCY_THRESHOLD: float = 0.8
+    SEMANTIC_CACHE_THRESHOLD: float = 0.92
+    ENABLE_ADAPTIVE_TUNING: bool = True
     ENABLE_CACHE: bool = True
     ENABLE_PROMPT_COMPRESSION: bool = False
 

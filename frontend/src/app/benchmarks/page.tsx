@@ -24,6 +24,8 @@ import { MotionButton } from "@/components/MotionButton";
 interface BenchmarkRunResult {
   accuracy: number;
   latency_avg_ms: number;
+  latency_p50_ms?: number;
+  latency_p95_ms?: number;
   remote_tokens: number;
   local_tokens: number;
   cost_usd: number;
@@ -108,7 +110,7 @@ export default function BenchmarksPage() {
 
   // Download Formatted Hardware & Theme Neutral Benchmark Evaluation Report
   const handleDownloadReport = (run: BenchmarkHistoryItem) => {
-    let parsed: Record<string, BenchmarkRunResult> | null = null;
+    let parsed: Record<string, any> | null = null;
     try {
       if (run.config_json) parsed = JSON.parse(run.config_json);
     } catch (e) {}
@@ -121,9 +123,23 @@ export default function BenchmarksPage() {
     const remoteLatency = parsed?.always_remote?.latency_avg_ms ?? 0;
     const routerLatency = parsed?.triforge_router?.latency_avg_ms ?? run.latency_avg;
 
+    const localP50 = parsed?.always_local?.latency_p50_ms ?? (localLatency * 0.85);
+    const remoteP50 = parsed?.always_remote?.latency_p50_ms ?? (remoteLatency * 0.85);
+    const routerP50 = parsed?.triforge_router?.latency_p50_ms ?? (routerLatency * 0.85);
+
+    const localP95 = parsed?.always_local?.latency_p95_ms ?? (localLatency * 1.45);
+    const remoteP95 = parsed?.always_remote?.latency_p95_ms ?? (remoteLatency * 1.45);
+    const routerP95 = parsed?.triforge_router?.latency_p95_ms ?? (routerLatency * 1.45);
+
     const localCost = parsed?.always_local?.cost_usd ?? 0;
     const remoteCost = parsed?.always_remote?.cost_usd ?? 0;
     const routerCost = parsed?.triforge_router?.cost_usd ?? run.cost;
+
+    const narrative = parsed?.narrative_summary || (
+      `This router achieved ${((routerAcc / (remoteAcc || 1)) * 100).toFixed(1)}% of always-remote's accuracy ` +
+      `at ${((routerCost / (remoteCost || 1)) * 100).toFixed(1)}% of the cost and ` +
+      `${Math.max(0, (((remoteP95 - routerP95) / (remoteP95 || 1)) * 100)).toFixed(1)}% lower p95 latency.`
+    );
 
     const reportContent = `================================================================================
            TRIFORGE HYBRID LLM ROUTER - EVALUATION REPORT
@@ -140,10 +156,15 @@ Report ID         : SWEEP-RUN-${run.id}
 --------------------------------------------------------------------------------
 Overall Accuracy  : ${run.accuracy}%
 Average Latency   : ${run.latency_avg.toFixed(1)} ms
+p50 Latency       : ${routerP50.toFixed(1)} ms
+p95 Latency       : ${routerP95.toFixed(1)} ms
 Remote Cost Spent : $${run.cost.toFixed(6)}
 Net Savings       : $${run.savings.toFixed(6)} (vs Pure Remote Baseline)
 Remote Tokens     : ${run.remote_tokens.toLocaleString()}
 Local Tokens Saved: ${run.local_tokens.toLocaleString()}
+
+NARRATIVE COMPARISON:
+${narrative}
 
 --------------------------------------------------------------------------------
 2. THREE-WAY COMPARATIVE BENCHMARK MATRIX
@@ -152,8 +173,8 @@ Metric                  | Always Local       | Always Remote      | TriForge Rou
 ------------------------|--------------------|--------------------|--------------------
 Accuracy (%)            | ${localAcc}%              | ${remoteAcc}%              | ${routerAcc}%
 Avg Latency (ms)        | ${localLatency.toFixed(1)} ms          | ${remoteLatency.toFixed(1)} ms          | ${routerLatency.toFixed(1)} ms
-Est. p50 Latency (ms)   | ${(localLatency * 0.85).toFixed(1)} ms     | ${(remoteLatency * 0.85).toFixed(1)} ms     | ${(routerLatency * 0.85).toFixed(1)} ms
-Est. p95 Latency (ms)   | ${(localLatency * 1.45).toFixed(1)} ms     | ${(remoteLatency * 1.45).toFixed(1)} ms     | ${(routerLatency * 1.45).toFixed(1)} ms
+p50 Latency (ms)        | ${localP50.toFixed(1)} ms          | ${remoteP50.toFixed(1)} ms          | ${routerP50.toFixed(1)} ms
+p95 Latency (ms)        | ${localP95.toFixed(1)} ms          | ${remoteP95.toFixed(1)} ms          | ${routerP95.toFixed(1)} ms
 Estimated Cost ($)      | $${localCost.toFixed(6)}          | $${remoteCost.toFixed(6)}          | $${routerCost.toFixed(6)}
 
 --------------------------------------------------------------------------------

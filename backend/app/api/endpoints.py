@@ -1,30 +1,44 @@
 import time
 import json
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import os
 from typing import List, Optional
 
 from app.database.session import get_db
-from app.database.models import RequestModel, ResponseModel, BenchmarkModel
+from app.database.models import (
+    RequestModel, ResponseModel, BenchmarkModel, CacheEventModel, 
+    RouterThresholdModel, RouterAdjustmentLogModel, ProviderFailoverLogModel,
+    SecurityEventModel
+)
 from app.database.schemas import (
     ChatRequest, ChatResponse, RouterExplanationRequest, RouterExplanationResponse,
     AnalyticsSummary, BenchmarkRunRequest, BenchmarkSummary, SettingsPayload
 )
 from app.config import settings
 from app.router.routing_engine import RoutingEngine
+from app.router.adaptive_tuner import AdaptiveThresholdManager
 from app.providers.groq_provider import GroqProvider
 from app.providers.remote_fireworks import RemoteFireworksProvider
 from app.providers.openai_provider import OpenAIProvider
 from app.providers.anthropic_provider import AnthropicProvider
+from app.providers.failover_manager import ProviderHealthManager
+from app.security.prompt_guard import PromptGuard
+from app.security.limiter import RateLimiter
 from app.evaluation.consistency import ConsistencyChecker
 from app.evaluation.hallucination import HallucinationDetector
 from app.utils.compressor import PromptCompressor
 from app.cache.smart_cache import SmartCache
 from app.analytics.engine import AnalyticsEngine
 from app.benchmark.runner import BenchmarkRunner
+from app.utils.hardware_detect import get_hardware_info
+
+adaptive_tuner = AdaptiveThresholdManager()
+failover_manager = ProviderHealthManager()
+prompt_guard = PromptGuard(enabled=True)
+rate_limiter = RateLimiter(requests_per_minute=30, window_sec=60)
 
 router = APIRouter(prefix="/api")
 
@@ -122,8 +136,24 @@ def explain_route(req: RouterExplanationRequest):
     )
 
 @router.post("/chat", response_model=ChatResponse)
-def chat_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
+def chat_endpoint(req: ChatRequest, request: Request, db: Session = Depends(get_db)):
     start_time = time.time()
+    client_ip = request.client.host if request and request.client else "127.0.0.1"
+
+    # Rate Limiter check (30 req / min)
+    allowed, count = rate_limiter.is_allowed(client_ip)
+    if not allowed:
+        rate_limiter.log_security_event(db, "rate_limit_exceeded", client_ip, req.prompt, ["rate_limit_exceeded_30_per_min"])
+        raise HTTPException(status_code=429, detail="Rate limit exceeded: Maximum 30 requests per minute per IP.")
+
+    # Prompt Guard check (Prompt Injection / Jailbreak)
+    is_injected, reasons = prompt_guard.inspect(req.prompt)
+    if is_injected:
+        rate_limiter.log_security_event(db, "prompt_injection", client_ip, req.prompt, reasons)
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Security Alert: Prompt injection pattern detected ({', '.join(reasons)}). Request refused."
+        )
     
     # 1. Cache Check
     if settings.ENABLE_CACHE:
@@ -167,6 +197,8 @@ def chat_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
                 estimated_cost=0.0,
                 confidence_score=round(sim_score, 2),
                 is_cached=True,
+                intent=routing_engine.classifier.classify(req.prompt),
+                compute_backend=get_hardware_info()["compute_backend"],
                 timestamp=new_request.timestamp
             )
 
@@ -187,10 +219,15 @@ def chat_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
     draft = None
 
     category = estimates.get("category", "general_qa")
+    active_threshold = req.threshold if req.threshold is not None else adaptive_tuner.get_threshold(db, category)
+    word_count = len(req.prompt.split())
 
     if route_name == "local":
-        # Bypass self-consistency check for low-risk or subjective tasks (saves token cost & avoids false-positives)
-        bypass_consistency = category in ["conversation", "translation", "creative_writing", "summarization", "extraction"]
+        # Bypass self-consistency check for low-risk, conversational, general QA, or short tasks (<= 15 words)
+        bypass_consistency = (
+            category in ["conversation", "general_qa", "translation", "creative_writing", "summarization", "extraction"] 
+            or word_count <= 15
+        )
         
         if bypass_consistency:
             s1, total_p, total_c = groq_local.generate(req.prompt, local_model)
@@ -200,36 +237,43 @@ def chat_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
             confidence = 1.0
             draft = s1
         else:
-            # Run self-consistency for high-stakes/factual reasoning tasks
-            sim, s1, s2, total_p, total_c = consistency_checker.check_consistency(req.prompt, local_model, threshold)
+            # Run self-consistency for complex high-stakes reasoning/math tasks
+            sim, s1, s2, total_p, total_c = consistency_checker.check_consistency(req.prompt, local_model, active_threshold)
             p_tok += total_p
             c_tok += total_c
             confidence = sim
             draft = s1
 
-        # Run hallucination check
-        flagged_info = hallucination_detector.check_hallucination_signals(s1)
-
-        if sim < threshold or flagged_info["flagged"]:
-            escalated = True
-            final_route = "LOCAL -> ESCALATED TO REMOTE"
-            route_reason = (
-                f"Escalated because consistency similarity ({sim:.2f}) was below threshold ({threshold:.2f}) "
-                f"or hedging/hallucination flags were raised: {flagged_info['reasons']}"
-            )
-            
-            # Verify Draft Escalation
-            prov = get_remote_provider(remote_model)
-            if hasattr(prov, "verify_draft") and not s1.startswith("Error querying Groq model"):
-                ans, r_p, r_c = prov.verify_draft(req.prompt, s1, remote_model)
-            else:
-                # If provider doesn't support verify-draft or draft is an error, run normal remote fallback
-                ans, r_p, r_c = prov.generate(req.prompt, remote_model)
+        # Check if local model generation failed with an error message (e.g. rate limit 429)
+        if s1 and s1.startswith("Error"):
+            final_route = "REMOTE (FALLBACK - LOCAL UNAVAILABLE)"
+            route_reason = f"Local provider rate limited or unavailable ({s1[:60]}...). Executed remote fallback directly."
+            ans, r_p, r_c, used_p = failover_manager.generate_with_failover(req.prompt, "groq", remote_model, db)
             p_tok += r_p
             c_tok += r_c
+            confidence = 1.0
         else:
-            # Trusted local response
-            ans = s1
+            # Run hallucination check
+            flagged_info = hallucination_detector.check_hallucination_signals(s1)
+
+            if sim < active_threshold or flagged_info["flagged"]:
+                escalated = True
+                final_route = "LOCAL -> ESCALATED TO REMOTE"
+                route_reason = (
+                    f"Escalated because consistency similarity ({sim:.2f}) was below threshold ({active_threshold:.2f}) "
+                    f"or hedging/hallucination flags were raised: {flagged_info['reasons']}"
+                )
+                
+                # Fast remote escalation without slow draft re-generation
+                ans, r_p, r_c, used_p = failover_manager.generate_with_failover(req.prompt, "groq", remote_model, db)
+                p_tok += r_p
+                c_tok += r_c
+            else:
+                # Trusted local response
+                ans = s1
+
+            # Trigger adaptive threshold tuning feedback loop
+            adaptive_tuner.record_outcome_and_tune(db, category, escalated, sim)
     else:
         # Route Remote directly
         prompt_to_send = req.prompt
@@ -237,8 +281,7 @@ def chat_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
             prompt_to_send = prompt_compressor.compress(req.prompt)
             route_reason += " (Prompt Compressed before sending)"
 
-        prov = get_remote_provider(remote_model)
-        ans, r_p, r_c = prov.generate(prompt_to_send, remote_model)
+        ans, r_p, r_c, used_p = failover_manager.generate_with_failover(prompt_to_send, "groq", remote_model, db)
         p_tok += r_p
         c_tok += r_c
 
@@ -275,8 +318,7 @@ def chat_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
     db.commit()
 
     # Save in Cache
-    if settings.ENABLE_CACHE and not escalated:
-        # Don't cache escalated drafts directly unless desired, cache clean responses
+    if settings.ENABLE_CACHE and ans and not ans.startswith("Error"):
         smart_cache.set(db, req.prompt, ans, remote_model if "remote" in final_route.lower() else local_model, p_tok, c_tok, latency)
 
     return ChatResponse(
@@ -292,6 +334,8 @@ def chat_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
         confidence_score=confidence,
         is_cached=False,
         draft_text=draft,
+        intent=category,
+        compute_backend=get_hardware_info()["compute_backend"],
         timestamp=new_request.timestamp
     )
 
@@ -321,10 +365,14 @@ async def chat_stream_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
         await asyncio.sleep(0.01)
 
         category = estimates.get("category", "general_qa")
+        word_count = len(req.prompt.split())
 
         if route_name == "local":
-            # Bypass self-consistency check for low-risk or subjective tasks (saves token cost & avoids false-positives)
-            bypass_consistency = category in ["conversation", "translation", "creative_writing", "summarization", "extraction"]
+            # Bypass self-consistency check for low-risk, conversational, general QA, or short tasks (<= 15 words)
+            bypass_consistency = (
+                category in ["conversation", "general_qa", "translation", "creative_writing", "summarization", "extraction"] 
+                or word_count <= 15
+            )
             
             if bypass_consistency:
                 s1, total_p, total_c = groq_local.generate(req.prompt, local_model)
@@ -334,40 +382,42 @@ async def chat_stream_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
                 draft_text = s1
                 confidence = 1.0
             else:
-                # Run self-consistency check for high-stakes/factual reasoning tasks
+                # Run self-consistency check for high-stakes math/logic reasoning tasks
                 sim, s1, s2, total_p, total_c = consistency_checker.check_consistency(req.prompt, local_model, threshold)
                 p_tok += total_p
                 c_tok += total_c
                 draft_text = s1
                 confidence = sim
 
-            flagged_info = hallucination_detector.check_hallucination_signals(s1)
-
-            if sim < threshold or flagged_info["flagged"]:
-                escalated = True
-                final_route = "LOCAL -> ESCALATED TO REMOTE"
-                route_reason = (
-                    f"Escalated: Similarity ({sim:.2f}) < threshold ({threshold:.2f}) "
-                    f"or flagged: {flagged_info['reasons']}"
-                )
-                yield f"data: {json.dumps({'event': 'escalation', 'reason': route_reason, 'draft': s1})}\n\n"
-                await asyncio.sleep(0.01)
-
+            # Check if local model generation failed with an error message (e.g. rate limit 429)
+            if s1 and s1.startswith("Error"):
+                final_route = "REMOTE (FALLBACK - LOCAL UNAVAILABLE)"
+                route_reason = f"Local provider rate limited or unavailable ({s1[:60]}...). Executed remote fallback directly."
                 prov = get_remote_provider(remote_model)
-                if hasattr(prov, "verify_draft_stream") and not s1.startswith("Error querying Groq model"):
-                    # Stream remote verify
-                    stream = prov.verify_draft_stream(req.prompt, s1, remote_model)
-                    chunk = {}
-                    for chunk in stream:
-                        delta = chunk.get("text", "")
-                        ans_accumulator.append(delta)
-                        yield f"data: {json.dumps({'event': 'content', 'text': delta})}\n\n"
-                        await asyncio.sleep(0.005)
-                    # final tokens
-                    p_tok += chunk.get("prompt_tokens", 0)
-                    c_tok += chunk.get("completion_tokens", 0)
-                else:
-                    # fallback normal stream
+                stream = prov.generate_stream(req.prompt, remote_model)
+                chunk = {}
+                for chunk in stream:
+                    delta = chunk.get("text", "")
+                    ans_accumulator.append(delta)
+                    yield f"data: {json.dumps({'event': 'content', 'text': delta})}\n\n"
+                    await asyncio.sleep(0.005)
+                p_tok += chunk.get("prompt_tokens", 0)
+                c_tok += chunk.get("completion_tokens", 0)
+                confidence = 1.0
+            else:
+                flagged_info = hallucination_detector.check_hallucination_signals(s1)
+
+                if sim < threshold or flagged_info["flagged"]:
+                    escalated = True
+                    final_route = "LOCAL -> ESCALATED TO REMOTE"
+                    route_reason = (
+                        f"Escalated: Similarity ({sim:.2f}) < threshold ({threshold:.2f}) "
+                        f"or flagged: {flagged_info['reasons']}"
+                    )
+                    yield f"data: {json.dumps({'event': 'escalation', 'reason': route_reason, 'draft': s1})}\n\n"
+                    await asyncio.sleep(0.01)
+
+                    prov = get_remote_provider(remote_model)
                     stream = prov.generate_stream(req.prompt, remote_model)
                     chunk = {}
                     for chunk in stream:
@@ -377,14 +427,14 @@ async def chat_stream_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
                         await asyncio.sleep(0.005)
                     p_tok += chunk.get("prompt_tokens", 0)
                     c_tok += chunk.get("completion_tokens", 0)
-            else:
-                # Simulating local stream of trusted response to UI
-                yield f"data: {json.dumps({'event': 'status', 'text': 'Streaming trusted local response...'})}\n\n"
-                await asyncio.sleep(0.01)
-                for word in s1.split(" "):
-                    ans_accumulator.append(word + " ")
-                    yield f"data: {json.dumps({'event': 'content', 'text': word + ' '})}\n\n"
-                    await asyncio.sleep(0.02)  # Simulate typing
+                else:
+                    # Stream trusted local response to UI
+                    yield f"data: {json.dumps({'event': 'status', 'text': 'Streaming trusted local response...'})}\n\n"
+                    await asyncio.sleep(0.01)
+                    for word in s1.split(" "):
+                        ans_accumulator.append(word + " ")
+                        yield f"data: {json.dumps({'event': 'content', 'text': word + ' '})}\n\n"
+                        await asyncio.sleep(0.01)
         else:
             # Direct remote stream
             prompt_to_send = req.prompt
@@ -438,17 +488,129 @@ async def chat_stream_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
         db.commit()
 
         # Cache saving
-        if settings.ENABLE_CACHE and not escalated:
+        if settings.ENABLE_CACHE and full_ans and not full_ans.startswith("Error"):
             smart_cache.set(db, req.prompt, full_ans, remote_model if "remote" in final_route.lower() else local_model, p_tok, c_tok, latency)
 
         # Send final details event
-        yield f"data: {json.dumps({'event': 'done', 'id': db_req.id, 'latency_ms': latency, 'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'estimated_cost': cost, 'route': final_route, 'confidence_score': confidence})}\n\n"
+        yield f"data: {json.dumps({'event': 'done', 'id': db_req.id, 'latency_ms': latency, 'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'estimated_cost': cost, 'route': final_route, 'confidence_score': confidence, 'intent': category, 'compute_backend': get_hardware_info()['compute_backend']})}\n\n"
 
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
 @router.get("/analytics", response_model=AnalyticsSummary)
 def get_analytics(db: Session = Depends(get_db)):
     return analytics_engine.get_summary(db)
+
+@router.get("/analytics/cache-performance")
+def get_cache_performance(db: Session = Depends(get_db)):
+    """
+    Returns real-time exact vs semantic vector cache performance metrics.
+    """
+    from sqlalchemy import func
+    exact_hits = db.query(func.count(CacheEventModel.id)).filter(CacheEventModel.hit_type == "EXACT").scalar() or 0
+    semantic_hits = db.query(func.count(CacheEventModel.id)).filter(CacheEventModel.hit_type == "SEMANTIC").scalar() or 0
+    misses = db.query(func.count(CacheEventModel.id)).filter(CacheEventModel.hit_type == "MISS").scalar() or 0
+    
+    total = exact_hits + semantic_hits + misses
+    
+    exact_rate = (exact_hits / total * 100) if total > 0 else 0.0
+    semantic_rate = (semantic_hits / total * 100) if total > 0 else 0.0
+    total_hit_rate = ((exact_hits + semantic_hits) / total * 100) if total > 0 else 0.0
+    semantic_boost = (semantic_hits / (exact_hits + semantic_hits) * 100) if (exact_hits + semantic_hits) > 0 else 0.0
+
+    return {
+        "total_requests": total,
+        "exact_cache_hits": exact_hits,
+        "semantic_cache_hits": semantic_hits,
+        "cache_misses": misses,
+        "exact_hit_rate_pct": round(exact_rate, 2),
+        "semantic_hit_rate_pct": round(semantic_rate, 2),
+        "total_cache_hit_rate_pct": round(total_hit_rate, 2),
+        "semantic_boost_pct": round(semantic_boost, 2),
+        "semantic_cache_threshold": getattr(settings, "SEMANTIC_CACHE_THRESHOLD", 0.92)
+    }
+
+@router.get("/analytics/router-adaptation")
+def get_router_adaptation(db: Session = Depends(get_db)):
+    """
+    Returns active confidence thresholds per intent category and adjustment audit log.
+    """
+    current_thresholds = adaptive_tuner.get_all_thresholds(db)
+    logs = db.query(RouterAdjustmentLogModel).order_by(RouterAdjustmentLogModel.timestamp.desc()).limit(30).all()
+
+    recent_adjustments = [
+        {
+            "id": log.id,
+            "intent_category": log.intent_category,
+            "old_threshold": log.old_threshold,
+            "new_threshold": log.new_threshold,
+            "correction_rate": log.correction_rate,
+            "reason": log.reason,
+            "timestamp": log.timestamp
+        }
+        for log in logs
+    ]
+
+    return {
+        "adaptive_tuning_enabled": getattr(settings, "ENABLE_ADAPTIVE_TUNING", True),
+        "default_threshold": getattr(settings, "DEFAULT_CONSISTENCY_THRESHOLD", 0.80),
+        "current_thresholds": current_thresholds,
+        "recent_adjustments": recent_adjustments
+    }
+
+@router.get("/analytics/provider-health")
+def get_provider_health(db: Session = Depends(get_db)):
+    """
+    Returns real-time provider health status and failover audit log.
+    """
+    health_status = failover_manager.get_health_status()
+    failover_logs = db.query(ProviderFailoverLogModel).order_by(ProviderFailoverLogModel.timestamp.desc()).limit(30).all()
+
+    recent_events = [
+        {
+            "id": log.id,
+            "failed_provider": log.failed_provider,
+            "fallback_provider": log.fallback_provider,
+            "error_reason": log.error_reason,
+            "timestamp": log.timestamp
+        }
+        for log in failover_logs
+    ]
+
+    return {
+        "provider_health": health_status,
+        "failover_order": failover_manager.failover_order,
+        "recent_failover_events": recent_events
+    }
+
+@router.get("/analytics/security")
+def get_security_analytics(db: Session = Depends(get_db)):
+    """
+    Returns security statistics, rate limiting configuration, prompt guard status, and security audit log.
+    """
+    events = db.query(SecurityEventModel).order_by(SecurityEventModel.timestamp.desc()).limit(30).all()
+
+    injection_count = db.query(SecurityEventModel).filter(SecurityEventModel.event_type == "prompt_injection").count()
+    rate_limit_count = db.query(SecurityEventModel).filter(SecurityEventModel.event_type == "rate_limit_exceeded").count()
+
+    recent_security_logs = [
+        {
+            "id": ev.id,
+            "event_type": ev.event_type,
+            "client_ip": ev.client_ip,
+            "prompt_snippet": ev.prompt_snippet,
+            "flagged_reasons": ev.flagged_reasons,
+            "timestamp": ev.timestamp
+        }
+        for ev in events
+    ]
+
+    return {
+        "prompt_guard_enabled": prompt_guard.enabled,
+        "rate_limit_per_minute": rate_limiter.requests_per_minute,
+        "total_prompt_injections_blocked": injection_count,
+        "total_rate_limits_triggered": rate_limit_count,
+        "recent_security_events": recent_security_logs
+    }
 
 @router.get("/history", response_model=List[ChatResponse])
 def get_history(limit: int = 20, db: Session = Depends(get_db)):

@@ -1,0 +1,44 @@
+[
+  {
+    "id": 1,
+    "category": "general_qa",
+    "task": "What is the capital of France?",
+    "expected": ["paris"]
+  },
+  {
+    "id": 2,
+    "category": "factual",
+    "task": "Who painted the Mona Lisa?",
+    "expected": ["da vinci", "leonardo"]
+  },
+  {
+    "id": 3,
+    "category": "math",
+    "task": "What is 15 multiplied by 6?",
+    "expected": ["90"]
+  },
+  {
+    "id": 4,
+    "category": "coding",
+    "task": "Write a Python function called 'add_numbers' that takes two parameters and returns their sum.",
+    "expected": ["def add_numbers", "return"]
+  },
+  {
+    "id": 5,
+    "category": "summarization",
+    "task": "Summarize in one sentence: Computers process data using processors and store information in memory.",
+    "expected": ["process", "data"]
+  },
+  {
+    "id": 6,
+    "category": "translation",
+    "task": "Translate 'Hello, how are you?' to Spanish.",
+    "expected": ["hola"]
+  },
+  {
+    "id": 7,
+    "category": "reasoning",
+    "task": "If all roses are flowers and some flowers fade quickly, do all roses fade quickly?",
+    "expected": ["no", "not necessarily"]
+  }
+]

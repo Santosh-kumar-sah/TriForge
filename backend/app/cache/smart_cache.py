@@ -5,11 +5,12 @@ import re
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
-from app.database.models import CacheModel
+from app.database.models import CacheModel, CacheEventModel
+from app.config import settings
 
 class SmartCache:
-    def __init__(self, semantic_threshold: float = 0.90):
-        self.semantic_threshold = semantic_threshold
+    def __init__(self, semantic_threshold: Optional[float] = None):
+        self.semantic_threshold = semantic_threshold if semantic_threshold is not None else getattr(settings, "SEMANTIC_CACHE_THRESHOLD", 0.92)
 
     @staticmethod
     def _hash_prompt(prompt: str) -> str:
@@ -58,6 +59,19 @@ class SmartCache:
             return 0.0
         return sum(a * b for a, b in zip(vec1, vec2))
 
+    def _log_event(self, db: Session, hit_type: str, score: float):
+        """Logs a cache lookup event to cache_events table for analytics metrics."""
+        try:
+            event = CacheEventModel(
+                hit_type=hit_type,
+                similarity_score=score,
+                timestamp=datetime.utcnow()
+            )
+            db.add(event)
+            db.commit()
+        except Exception:
+            db.rollback()
+
     def get(self, db: Session, prompt: str, threshold: Optional[float] = None) -> Tuple[Optional[CacheModel], str, float]:
         """
         Looks up prompt in cache using 2-stage retrieval:
@@ -66,12 +80,13 @@ class SmartCache:
 
         Returns: (CacheModel | None, hit_type ("EXACT" | "SEMANTIC" | "MISS"), similarity_score)
         """
-        sim_threshold = threshold if threshold is not None else self.semantic_threshold
+        sim_threshold = threshold if threshold is not None else getattr(settings, "SEMANTIC_CACHE_THRESHOLD", self.semantic_threshold)
 
         # Stage 1: Exact Match Check
         p_hash = self._hash_prompt(prompt)
         exact_entry = db.query(CacheModel).filter(CacheModel.prompt_hash == p_hash).first()
         if exact_entry:
+            self._log_event(db, "EXACT", 1.0)
             return exact_entry, "EXACT", 1.0
 
         # Stage 2: Semantic Similarity Check against recent cache entries
@@ -94,8 +109,10 @@ class SmartCache:
                 continue
 
         if best_match and best_score >= sim_threshold:
+            self._log_event(db, "SEMANTIC", best_score)
             return best_match, "SEMANTIC", best_score
 
+        self._log_event(db, "MISS", 0.0)
         return None, "MISS", 0.0
 
     def set(

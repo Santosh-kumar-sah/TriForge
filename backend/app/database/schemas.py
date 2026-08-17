@@ -21,6 +21,8 @@ class ChatResponse(BaseModel):
     confidence_score: float
     is_cached: bool
     draft_text: Optional[str] = None
+    intent: Optional[str] = "general_qa"
+    compute_backend: Optional[str] = "CPU"
     timestamp: datetime
 
 class RouterExplanationRequest(BaseModel):

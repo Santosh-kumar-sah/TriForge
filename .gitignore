@@ -15,6 +15,7 @@ env/
 .idea/
 .agents/
 
-# SQLite WAL files
+# SQLite files
+*.db
 *.db-wal
 *.db-shm

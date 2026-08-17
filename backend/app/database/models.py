@@ -60,3 +60,49 @@ class BenchmarkModel(Base):
     savings = Column(Float, default=0.0)
     latency_avg = Column(Float, default=0.0)
     config_json = Column(Text, nullable=True)  # Store sweep configurations or settings as JSON
+
+class CacheEventModel(Base):
+    __tablename__ = "cache_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    hit_type = Column(String(50), nullable=False)  # EXACT, SEMANTIC, MISS
+    similarity_score = Column(Float, default=0.0)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+
+class RouterThresholdModel(Base):
+    __tablename__ = "router_thresholds"
+
+    id = Column(Integer, primary_key=True, index=True)
+    intent_category = Column(String(50), unique=True, index=True, nullable=False)
+    current_threshold = Column(Float, default=0.80)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class RouterAdjustmentLogModel(Base):
+    __tablename__ = "router_adjustment_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    intent_category = Column(String(50), nullable=False, index=True)
+    old_threshold = Column(Float, nullable=False)
+    new_threshold = Column(Float, nullable=False)
+    correction_rate = Column(Float, nullable=False)
+    reason = Column(Text, nullable=False)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+
+class ProviderFailoverLogModel(Base):
+    __tablename__ = "provider_failover_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    failed_provider = Column(String(50), nullable=False)
+    fallback_provider = Column(String(50), nullable=False)
+    error_reason = Column(Text, nullable=False)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+
+class SecurityEventModel(Base):
+    __tablename__ = "security_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_type = Column(String(50), nullable=False, index=True)  # prompt_injection, rate_limit_exceeded
+    client_ip = Column(String(50), nullable=False)
+    prompt_snippet = Column(Text, nullable=True)
+    flagged_reasons = Column(Text, nullable=True)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())

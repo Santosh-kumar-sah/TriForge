@@ -31,32 +31,45 @@ class GroqProvider(BaseProvider):
             return "Error: GROQ_API_KEY is not configured.", 0, 0
 
         headers = self._get_headers(active_key)
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": options.get("temperature", 0.7) if options else 0.7,
-        }
+        fallback_models = [model, "openai/gpt-oss-20b", "groq/compound"]
+        last_exception = None
 
-        try:
-            response = requests.post(
-                self.base_url, headers=headers, json=payload, timeout=30
-            )
-            response.raise_for_status()
-            data = response.json()
+        for target_model in fallback_models:
+            payload = {
+                "model": target_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": options.get("temperature", 0.7) if options else 0.7,
+            }
 
-            content = (
-                data.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "")
-            )
-            usage = data.get("usage", {})
-            prompt_tokens = usage.get("prompt_tokens", 0)
-            completion_tokens = usage.get("completion_tokens", 0)
-            return content, prompt_tokens, completion_tokens
+            try:
+                response = requests.post(
+                    self.base_url, headers=headers, json=payload, timeout=30
+                )
+                if response.status_code == 429 and target_model != fallback_models[-1]:
+                    # Rate limited on current model — silently try next high-throughput model
+                    continue
 
-        except Exception as e:
-            # Graceful fallback — never crash or leak API key in error message
-            return f"Error querying Groq model ({model}): {sanitize_error_msg(e)}", 0, 0
+                response.raise_for_status()
+                data = response.json()
+
+                content = (
+                    data.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                )
+                usage = data.get("usage", {})
+                prompt_tokens = usage.get("prompt_tokens", 0)
+                completion_tokens = usage.get("completion_tokens", 0)
+                return content, prompt_tokens, completion_tokens
+
+            except Exception as e:
+                last_exception = e
+                if "429" in str(e) and target_model != fallback_models[-1]:
+                    continue
+                break
+
+        # Graceful fallback — never crash or leak API key in error message
+        return f"Error querying Groq model ({model}): {sanitize_error_msg(last_exception)}", 0, 0
 
     def generate_stream(
         self, prompt: str, model: str, options: Dict[str, Any] = None
