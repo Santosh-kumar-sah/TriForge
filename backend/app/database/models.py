@@ -42,6 +42,8 @@ class CacheModel(Base):
     prompt_tokens = Column(Integer, default=0)
     completion_tokens = Column(Integer, default=0)
     latency_ms = Column(Float, default=0.0)
+    embedding_json = Column(Text, nullable=True)
+    cache_type = Column(String(50), default="exact")
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
 class BenchmarkModel(Base):

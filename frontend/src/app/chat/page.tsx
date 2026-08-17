@@ -16,7 +16,8 @@ import {
   Download,
   Settings,
   Sparkles,
-  Info
+  Info,
+  Cpu
 } from "lucide-react";
 
 interface Message {
@@ -41,6 +42,7 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [computeBackend, setComputeBackend] = useState<string>("CPU");
 
   // Quick Override Options
   const [localModel, setLocalModel] = useState("");
@@ -101,6 +103,9 @@ export default function ChatPage() {
           setLocalModel(settingsData.active_local_model);
           setRemoteModel(settingsData.active_remote_model);
           setThreshold(settingsData.default_threshold);
+          if (settingsData.compute_backend) {
+            setComputeBackend(settingsData.compute_backend);
+          }
         }
       } catch (e) {
         console.error("Failed to load backend configurations", e);
@@ -432,7 +437,25 @@ export default function ChatPage() {
                     {isUser ? (
                       <div className="text-sm font-semibold whitespace-pre-wrap leading-relaxed">{msg.text}</div>
                     ) : (
-                      renderMessageContent(msg.text)
+                      <>
+                        {renderMessageContent(msg.text)}
+                        {msg.route && (
+                          <div className="mt-3 pt-2.5 border-t border-zinc-800/80 flex flex-wrap items-center gap-2 text-[11px]">
+                            <span className="bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 text-zinc-400 font-semibold flex items-center gap-1 shadow-sm">
+                              <Cpu className="w-3 h-3 text-amber-400" />
+                              Hardware: <span className="text-white font-bold">{computeBackend}</span>
+                            </span>
+                            <span className="bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 text-zinc-400 font-semibold shadow-sm">
+                              Confidence: <span className="text-emerald-400 font-bold">{(msg.confidence ?? 1.0).toFixed(2)}</span>
+                            </span>
+                            {msg.reason && (
+                              <span className="text-zinc-400 truncate max-w-md italic bg-zinc-950/60 px-2 py-0.5 rounded border border-zinc-850 shadow-sm" title={msg.reason}>
+                                {msg.reason}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>

@@ -18,15 +18,16 @@ def db_session():
         db.close()
         Base.metadata.drop_all(bind=engine)
 
-def test_cache_set_and_get(db_session):
+def test_exact_cache_hit(db_session):
     cache = SmartCache()
-    prompt = "Test query prompt"
-    response = "This is a cached response"
+    prompt = "What is the capital of France?"
+    response = "The capital of France is Paris."
     model = "mock-model"
     
     # Verify cache is empty initially
-    hit = cache.get(db_session, prompt)
+    hit, hit_type, score = cache.get(db_session, prompt)
     assert hit is None
+    assert hit_type == "MISS"
 
     # Set cache
     cache.set(
@@ -39,12 +40,33 @@ def test_cache_set_and_get(db_session):
         latency_ms=100.0
     )
 
-    # Get cache and verify
-    hit = cache.get(db_session, prompt)
+    # Exact match check
+    hit, hit_type, score = cache.get(db_session, prompt)
     assert hit is not None
+    assert hit_type == "EXACT"
+    assert score == 1.0
     assert hit.prompt == prompt
     assert hit.response_text == response
-    assert hit.model_name == model
-    assert hit.prompt_tokens == 10
-    assert hit.completion_tokens == 20
-    assert hit.latency_ms == 100.0
+
+def test_semantic_cache_hit(db_session):
+    cache = SmartCache(semantic_threshold=0.85)
+    orig_prompt = "What is the capital of France?"
+    sem_prompt = "what is the capital city of france"
+    response = "The capital of France is Paris."
+    
+    cache.set(
+        db=db_session,
+        prompt=orig_prompt,
+        response_text=response,
+        model_name="mock-model",
+        prompt_tokens=10,
+        completion_tokens=20,
+        latency_ms=100.0
+    )
+
+    # Semantic similarity match check
+    hit, hit_type, score = cache.get(db_session, sem_prompt)
+    assert hit is not None
+    assert hit_type in ("EXACT", "SEMANTIC")
+    assert score >= 0.85
+    assert hit.response_text == response

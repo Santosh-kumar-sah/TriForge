@@ -1,8 +1,19 @@
-# ⚡ TriForge: Production-Grade Hybrid LLM Router & Agent
+# ⚡ TriForge: Production-Grade Hybrid LLM Routing Agent
 
-**TriForge** is a production-grade, token-efficient hybrid LLM routing agent built for the AMD Developer Hackathon. It dynamically orchestrates user queries between a **free/ultra-fast local model** (via Groq / Ollama local models) and a **remote model** (Fireworks AI, OpenAI, Anthropic, or Groq Llama 3.3 70B).
+**TriForge** is a production-grade, token-efficient hybrid LLM routing agent. It dynamically orchestrates user queries between **free/fast local models** (via auto-detected CPU/CUDA/ROCm/MPS hardware or Groq Llama 3.1 8B) and **remote frontier models** (Fireworks AI, OpenAI, Anthropic, or Groq Llama 3.3 70B).
 
 By combining intent-based semantic classification, selective consistency checking, verify-draft verification loops, and local cache layers, TriForge slashes API token costs by up to **80%** while preserving high-tier response accuracy.
+
+---
+
+## 🎯 Positioning & Multi-Hackathon Themes
+
+TriForge features a thin, modular positioning layer allowing it to be adapted for different hackathons, pitch focus areas, and enterprise deployment models without changing the underlying engine:
+
+- 🌿 **[Sustainability & Green AI Focus (`positioning/README-sustainability.md`)](./positioning/README-sustainability.md)** — Focuses on carbon footprint avoidance, real-time kWh energy tracking, and grid power reduction.
+- ⚡ **[Developer Tools & Infrastructure Focus (`positioning/README-devtools.md`)](./positioning/README-devtools.md)** — Focuses on drop-in LLM cost optimization middleware, sub-50ms routing overhead, and developer telemetry.
+- 💰 **[FinTech & Spend Governance Focus (`positioning/README-fintech.md`)](./positioning/README-fintech.md)** — Focuses on enterprise AI cost governance, audit trails, and token budget management.
+- 🔓 **[Open-Source AI Focus (`positioning/README-opensource.md`)](./positioning/README-opensource.md)** — Focuses on pluggable bring-your-own-model (BYOM) architecture and model ecosystem freedom.
 
 ---
 
@@ -11,10 +22,11 @@ By combining intent-based semantic classification, selective consistency checkin
 - 🧠 **Smart Intent-Based Routing:** Automatically classifies query intent (`coding`, `math`, `reasoning`, `summarization`, `translation`, `extraction`, `conversation`, `creative_writing`, `general_qa`). 
   - Conceptual coding QA (e.g. *"What is a Python list?"*) is routed locally to save tokens.
   - Code generation and synthesis tasks route to high-capability remote models.
-- 🌱 **Real-Time Green AI & Energy Impact Tracker:** Live dashboard metrics tracking **Energy Conserved (kWh)**, **CO₂ Emissions Avoided (kg)**, and **Smartphone Battery Recharges Offset** from local hardware execution vs. 300W cloud datacenter GPUs.
-- 📄 **1-Click Hackathon Evaluation Report Export:** Export structured Markdown reports (`.md`) containing executive performance summaries, accuracy matrices, latency breakdowns, and eco metrics directly from the Benchmark Harness.
+- 🖥️ **Hardware Auto-Detection:** Dynamically detects execution backends (`ROCm`, `CUDA`, `MPS`, `NPU`, `CPU`) and applies calibrated hardware power draw profiles.
+- 🌱 **Real-Time Green AI & Energy Impact Tracker:** Live dashboard metrics tracking **Energy Conserved (kWh)**, **CO₂ Emissions Avoided (kg)**, and **Smartphone Battery Recharges Offset**.
+- 📄 **1-Click Evaluation Report Export:** Export structured Markdown reports (`.md`) containing executive performance summaries, accuracy matrices, latency breakdowns, and eco metrics directly from the Benchmark Harness.
 - 🔒 **API Key Privacy Protection & Key Shield:** Server API keys are stored securely on the backend. Responses strictly mask keys as `••••••••`—never leaking prefixes, suffixes, or raw key bytes to browser clients.
-- 💬 **Chat Thread Persistence:** Chat history automatically persists in `localStorage` across page navigation (Dashboard, Analytics, Settings, Benchmarks) with a 1-click Clear Chat feature.
+- 💬 **Chat Thread Persistence:** Chat history automatically persists in `localStorage` across page navigation with a 1-click Clear Chat feature.
 - ⚡ **Verify-Draft Escalation Loop:** When local answers require verification, TriForge submits the local draft alongside the prompt to the remote verifier, instructing it to output only corrections—drastically cutting cloud completion token expenditure.
 - ⚡ **Selective Self-Consistency:** Subjective and conversational queries (greetings, translations, summaries) bypass double-sampling consistency loops, saving 50% token cost and preventing false-positive escalations.
 
@@ -46,8 +58,8 @@ By combining intent-based semantic classification, selective consistency checkin
                  |         |                   |         |
                  |         v (Local)           v (Remote)|
                  |  +------+------+     +------+------+  |
-                 |  | Groq/Ollama |     | Pluggable   |  |
-                 |  | (8B / Local)|     | Providers   |  |
+                 |  | Local Engine|     | Pluggable   |  |
+                 |  |(CPU/GPU/Ollama)|   | Providers   |  |
                  |  +------+------+     | (Fireworks/ |  |
                  |         |            | OpenAI/etc) |  |
                  |         |            +------+------+  |
@@ -80,7 +92,7 @@ By combining intent-based semantic classification, selective consistency checkin
 
 ## ⚡ Production Performance Optimizations
 
-1. **Groq Acceleration:** Fast-path zero-shot intent classification via Groq's Llama 3.1 8B API with low connection timeouts.
+1. **Hardware Acceleration:** Hardware-detected local inference on CPU, CUDA, ROCm, MPS, or fast cloud fallback via Groq Llama 3.1 8B.
 2. **Concurrent Local Sampling:** Parallel execution of self-consistency checks using Python `ThreadPoolExecutor`.
 3. **SQLite WAL-Mode:** Enabled Write-Ahead Logging (`PRAGMA journal_mode=WAL`) and 64MB cache size for high-throughput concurrent I/O.
 4. **Selective Consistency Bypass:** Low-risk categories (`conversation`, `translation`, `creative_writing`, `summarization`, `extraction`) bypass double-sampling.
@@ -98,6 +110,7 @@ TriForge/
 │   │   ├── router/       # Hybrid routing engine & metrics estimation
 │   │   ├── classifier/   # Intent heuristic & semantic classification engine
 │   │   ├── providers/    # Model providers (Groq, Ollama, Fireworks, OpenAI, Anthropic)
+│   │   ├── utils/        # Hardware detection & prompt compressor
 │   │   ├── database/     # SQLAlchemy models, schemas, and session initialization
 │   │   ├── cache/        # Smart SQLite prompt cache
 │   │   ├── analytics/    # Analytics engine (costs, token metrics, eco/energy savings)
@@ -108,10 +121,15 @@ TriForge/
 ├── frontend/
 │   ├── src/
 │   │   ├── app/          # Next.js pages (Dashboard, Chat, Analytics, Benchmarks, Settings)
-│   │   ├── components/   # UI components (Sidebar navigation)
+│   │   ├── components/   # UI components (Sidebar navigation, Motion wrappers)
 │   │   └── lib/          # API config helpers
 │   ├── Dockerfile        # Next.js container configuration
 │   └── package.json      # Dependencies
+├── positioning/          # Multi-hackathon theme README variants
+│   ├── README-sustainability.md
+│   ├── README-devtools.md
+│   ├── README-fintech.md
+│   └── README-opensource.md
 ├── docker-compose.yml    # Full-stack orchestrator
 └── README.md
 ```
@@ -166,6 +184,5 @@ docker compose up --build
 Run pytest suite for backend router, caching, and provider checks:
 
 ```bash
-$env:PYTHONPATH="backend"
 python -m pytest backend/tests/
 ```

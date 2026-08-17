@@ -127,14 +127,17 @@ def chat_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
     
     # 1. Cache Check
     if settings.ENABLE_CACHE:
-        cached_entry = smart_cache.get(db, req.prompt)
+        cached_entry, hit_type, sim_score = smart_cache.get(db, req.prompt)
         if cached_entry:
+            route_label = f"CACHE HIT ({hit_type})"
+            route_desc = f"Resolved from cache database via {hit_type.lower()} matching (similarity: {sim_score:.2f})."
+            
             # Create a mock Request & Response log
             new_request = RequestModel(
                 prompt=req.prompt,
                 routed_to="cache",
-                final_route="CACHE HIT",
-                route_reason="Prompt found in local cache database.",
+                final_route=route_label,
+                route_reason=route_desc,
                 latency_ms=0.0,
                 prompt_tokens=cached_entry.prompt_tokens,
                 completion_tokens=cached_entry.completion_tokens,
@@ -146,7 +149,7 @@ def chat_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
             new_response = ResponseModel(
                 request_id=new_request.id,
                 response_text=cached_entry.response_text,
-                confidence_score=1.0,
+                confidence_score=round(sim_score, 2),
                 is_cached=True
             )
             db.add(new_response)
@@ -156,13 +159,13 @@ def chat_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
                 id=new_request.id,
                 prompt=req.prompt,
                 response_text=cached_entry.response_text,
-                route="CACHE HIT",
-                reason="Resolved instantly from cache.",
+                route=route_label,
+                reason=route_desc,
                 latency_ms=0.0,
                 prompt_tokens=cached_entry.prompt_tokens,
                 completion_tokens=cached_entry.completion_tokens,
                 estimated_cost=0.0,
-                confidence_score=1.0,
+                confidence_score=round(sim_score, 2),
                 is_cached=True,
                 timestamp=new_request.timestamp
             )
