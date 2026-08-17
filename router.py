@@ -2,7 +2,7 @@
 #
 # Smart 3-tier routing engine for the TriForge Hybrid Token-Efficient Agent.
 #
-# SCORING LOGIC (AMD Hackathon):
+# SCORING LOGIC:
 #   - Local Ollama calls  →  0 Fireworks tokens  →  BEST for score
 #   - Fireworks Tier 1    →  cheapest model (3B)  →  use when local won't work
 #   - Fireworks Tier 2    →  standard model (8B)  →  use only when tier1 insufficient

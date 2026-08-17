@@ -1,7 +1,6 @@
 # agent.py
 #
 # TriForge — Production-Grade Hybrid Token-Efficient Routing Agent
-# AMD Developer Hackathon · Track 1
 #
 # SCORING STRATEGY:
 #   Score = Accuracy% / Total_Fireworks_Tokens_Used

@@ -51,6 +51,7 @@ class AnalyticsSummary(BaseModel):
     energy_saved_kwh: float = 0.0
     co2_saved_kg: float = 0.0
     phone_charges_saved: int = 0
+    compute_backend: Optional[str] = "CPU"
     daily_stats: Optional[List[Dict[str, Any]]] = None
 
 class BenchmarkRunRequest(BaseModel):
@@ -77,6 +78,7 @@ class SettingsPayload(BaseModel):
     default_threshold: float
     enable_cache: bool
     enable_prompt_compression: bool
+    compute_backend: Optional[str] = None
     fireworks_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None

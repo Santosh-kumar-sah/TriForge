@@ -2,6 +2,7 @@ from sqlalchemy import func, case
 from sqlalchemy.orm import Session
 from app.database.models import RequestModel, ResponseModel
 from datetime import datetime, timedelta
+from app.utils.hardware_detect import get_hardware_info
 
 class AnalyticsEngine:
     def __init__(self):
@@ -9,6 +10,10 @@ class AnalyticsEngine:
         self.remote_cost_per_token = 0.20 / 1_000_000  # $0.20 per 1M tokens
 
     def get_summary(self, db: Session) -> dict:
+        hw_info = get_hardware_info()
+        compute_backend = hw_info["compute_backend"]
+        kwh_rate = hw_info["kwh_per_1k_tokens"]
+
         # Single aggregated query for overall metrics
         agg = db.query(
             func.count(RequestModel.id).label("total"),
@@ -37,6 +42,7 @@ class AnalyticsEngine:
                 "energy_saved_kwh": 0.0,
                 "co2_saved_kg": 0.0,
                 "phone_charges_saved": 0,
+                "compute_backend": compute_backend,
                 "daily_stats": []
             }
 
@@ -63,7 +69,7 @@ class AnalyticsEngine:
         est_cost = r_spent * self.remote_cost_per_token
         est_savings = tokens_saved * self.remote_cost_per_token
 
-        energy_saved_kwh = (tokens_saved / 1000.0) * 0.0035
+        energy_saved_kwh = (tokens_saved / 1000.0) * kwh_rate
         co2_saved_kg = energy_saved_kwh * 0.385
         phone_charges_saved = int(energy_saved_kwh * 80)
 
@@ -123,5 +129,6 @@ class AnalyticsEngine:
             "energy_saved_kwh": round(energy_saved_kwh, 4),
             "co2_saved_kg": round(co2_saved_kg, 4),
             "phone_charges_saved": phone_charges_saved,
+            "compute_backend": compute_backend,
             "daily_stats": daily_stats
         }

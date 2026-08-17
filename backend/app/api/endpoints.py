@@ -561,6 +561,8 @@ def update_env_file(updates: dict[str, str]):
     except Exception as e:
         pass
 
+from app.utils.hardware_detect import get_hardware_info
+
 @router.get("/settings", response_model=SettingsPayload)
 def get_settings():
     return SettingsPayload(
@@ -569,6 +571,7 @@ def get_settings():
         default_threshold=settings.DEFAULT_CONSISTENCY_THRESHOLD,
         enable_cache=settings.ENABLE_CACHE,
         enable_prompt_compression=settings.ENABLE_PROMPT_COMPRESSION,
+        compute_backend=get_hardware_info()["compute_backend"],
         fireworks_api_key=mask_api_key(settings.FIREWORKS_API_KEY),
         openai_api_key=mask_api_key(settings.OPENAI_API_KEY),
         anthropic_api_key=mask_api_key(settings.ANTHROPIC_API_KEY),

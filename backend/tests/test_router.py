@@ -5,20 +5,20 @@ from app.classifier.semantic_classifier import SemanticClassifier
 
 def test_routing_coding_escalation():
     """
-    Tests that coding queries route to remote immediately.
+    Tests that coding synthesis queries route to remote immediately.
     """
     mock_classifier = MagicMock(spec=SemanticClassifier)
     mock_classifier.classify.return_value = "coding"
     
     engine = RoutingEngine(classifier=mock_classifier)
-    route, reason, est = engine.route("def test_function(): pass")
+    route, reason, est = engine.route("Write a python binary search algorithm")
     
     assert route == "remote"
     assert "coding" in reason.lower()
 
-def test_routing_math_escalation():
+def test_routing_math_local_first():
     """
-    Tests that math queries route to remote immediately.
+    Tests that math queries route to local first (escalation checked downstream).
     """
     mock_classifier = MagicMock(spec=SemanticClassifier)
     mock_classifier.classify.return_value = "math"
@@ -26,7 +26,7 @@ def test_routing_math_escalation():
     engine = RoutingEngine(classifier=mock_classifier)
     route, reason, est = engine.route("What is 15 * 6?")
     
-    assert route == "remote"
+    assert route == "local"
     assert "math" in reason.lower()
 
 def test_routing_short_general_to_local():
@@ -44,15 +44,15 @@ def test_routing_short_general_to_local():
 
 def test_routing_long_general_to_remote():
     """
-    Tests that long general questions exceed length threshold and route to remote.
+    Tests that long general questions exceed length threshold (>75 words) and route to remote.
     """
     mock_classifier = MagicMock(spec=SemanticClassifier)
     mock_classifier.classify.return_value = "general_qa"
     
     engine = RoutingEngine(classifier=mock_classifier)
     
-    # 26 words > 25 threshold
-    long_prompt = " ".join(["word"] * 26)
+    # 78 words > 75 threshold
+    long_prompt = " ".join(["word"] * 78)
     route, reason, est = engine.route(long_prompt)
     
     assert route == "remote"

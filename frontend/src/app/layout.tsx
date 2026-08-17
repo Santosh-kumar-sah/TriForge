@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "TriForge | Hybrid LLM Router",
-  description: "Production-grade token-efficient hybrid routing agent for the AMD Developer Hackathon ACT II.",
+  description: "Production-grade token-efficient hybrid LLM routing agent.",
 };
 
 export default function RootLayout({

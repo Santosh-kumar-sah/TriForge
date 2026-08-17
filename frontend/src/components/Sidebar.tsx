@@ -91,7 +91,7 @@ export default function Sidebar() {
           <span className="text-xs font-semibold text-emerald-400">ONLINE</span>
         </div>
         <p className="text-[10px] text-zinc-500 mt-1 leading-relaxed">
-          Groq (local) & remote API endpoints linked.
+          Local hardware & cloud API providers linked.
         </p>
       </div>
     </aside>
