@@ -72,6 +72,12 @@ class SmartCache:
         except Exception:
             db.rollback()
 
+    def _is_error_response(self, text: str) -> bool:
+        if not text:
+            return True
+        t = text.lower()
+        return "stream error" in t or "404 client error" in t or "429 client error" in t or t.startswith("error")
+
     def get(self, db: Session, prompt: str, threshold: Optional[float] = None) -> Tuple[Optional[CacheModel], str, float]:
         """
         Looks up prompt in cache using 2-stage retrieval:
@@ -86,8 +92,15 @@ class SmartCache:
         p_hash = self._hash_prompt(prompt)
         exact_entry = db.query(CacheModel).filter(CacheModel.prompt_hash == p_hash).first()
         if exact_entry:
-            self._log_event(db, "EXACT", 1.0)
-            return exact_entry, "EXACT", 1.0
+            if self._is_error_response(exact_entry.response_text):
+                try:
+                    db.delete(exact_entry)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+            else:
+                self._log_event(db, "EXACT", 1.0)
+                return exact_entry, "EXACT", 1.0
 
         # Stage 2: Semantic Similarity Check against recent cache entries
         query_vec = self._compute_embedding(prompt)
@@ -98,6 +111,8 @@ class SmartCache:
 
         for entry in recent_entries:
             if not entry.embedding_json:
+                continue
+            if self._is_error_response(entry.response_text):
                 continue
             try:
                 cached_vec = json.loads(entry.embedding_json)
@@ -125,8 +140,10 @@ class SmartCache:
         completion_tokens: int, 
         latency_ms: float,
         cache_type: str = "exact"
-    ) -> CacheModel:
+    ) -> Optional[CacheModel]:
         """Caches a prompt-response pair along with its vector embedding."""
+        if self._is_error_response(response_text):
+            return None
         p_hash = self._hash_prompt(prompt)
         vec = self._compute_embedding(prompt)
         vec_json = json.dumps(vec)
