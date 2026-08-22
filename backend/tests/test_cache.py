@@ -1,11 +1,17 @@
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 from app.database.models import Base
 from app.cache.smart_cache import SmartCache
 
-# In-memory database setup for testing
-engine = create_engine("sqlite:///:memory:")
+# In-memory database setup for FastAPI TestClient tests. StaticPool keeps one
+# connection alive across the app thread so cache data is visible to endpoints.
+engine = create_engine(
+    "sqlite:///:memory:",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 @pytest.fixture(scope="function")
@@ -107,4 +113,36 @@ def test_provider_error_is_filtered(db_session):
         latency_ms=10.0
     )
     assert saved is None
+
+def test_stream_endpoint_cache_hit(db_session):
+    from fastapi.testclient import TestClient
+    from fastapi import FastAPI
+    from app.api.endpoints import router
+    from app.database.session import get_db
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: db_session
+
+    cache = SmartCache()
+    prompt = "Stream cache test question"
+    response = "Stream cached response answer"
+    cache.set(
+        db=db_session,
+        prompt=prompt,
+        response_text=response,
+        model_name="mock-model",
+        prompt_tokens=5,
+        completion_tokens=5,
+        latency_ms=10.0
+    )
+
+    client = TestClient(app)
+    res = client.post("/api/chat/stream", json={"prompt": prompt})
+    assert res.status_code == 200
+    assert "cache-hit" in res.text
+    assert '"event": "content"' in res.text
+    for word in response.split():
+        assert word in res.text
+
 

@@ -183,7 +183,7 @@ export default function ChatPage() {
       const decoder = new TextDecoder("utf-8");
       
       let textBuffer = "";
-      let metadata: any = {};
+      const metadata: any = {};
 
       while (true) {
         const { value, done } = await reader.read();
@@ -202,7 +202,7 @@ export default function ChatPage() {
             try {
               const data = JSON.parse(dataStr);
               
-              if (data.event === "routing") {
+              if (data.event === "routing" || data.event === "cache-hit") {
                 metadata.route = data.route;
                 metadata.reason = data.reason;
                 setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, ...metadata } : m));

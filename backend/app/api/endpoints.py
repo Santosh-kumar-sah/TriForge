@@ -1,14 +1,14 @@
 import time
 import json
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import os
 from typing import List, Optional
 
-from app.database.session import get_db, SessionLocal
+from app.database.session import get_db
 from app.database.models import (
     RequestModel, ResponseModel, BenchmarkModel, CacheEventModel, 
     RouterThresholdModel, RouterAdjustmentLogModel, ProviderFailoverLogModel,
@@ -55,6 +55,15 @@ hallucination_detector = HallucinationDetector()
 prompt_compressor = PromptCompressor(groq_local)
 smart_cache = SmartCache()
 analytics_engine = AnalyticsEngine()
+
+
+def _to_utc_timestamp(timestamp: datetime) -> datetime:
+    """Attach UTC to naive datetimes so JSON serialization keeps the timezone."""
+    if timestamp is None:
+        return timestamp
+    if timestamp.tzinfo is None:
+        return timestamp.replace(tzinfo=timezone.utc)
+    return timestamp.astimezone(timezone.utc)
 
 # Helpers
 def resolve_remote_model(model: str) -> str:
@@ -200,7 +209,7 @@ def chat_endpoint(req: ChatRequest, request: Request, db: Session = Depends(get_
                 is_cached=True,
                 intent=routing_engine.classifier.classify(req.prompt),
                 compute_backend=get_hardware_info()["compute_backend"],
-                timestamp=new_request.timestamp
+                timestamp=_to_utc_timestamp(new_request.timestamp)
             )
 
     # 2. Run Route Engine
@@ -337,31 +346,36 @@ def chat_endpoint(req: ChatRequest, request: Request, db: Session = Depends(get_
         draft_text=draft,
         intent=category,
         compute_backend=get_hardware_info()["compute_backend"],
-        timestamp=new_request.timestamp
+        timestamp=_to_utc_timestamp(new_request.timestamp)
     )
 
 @router.post("/chat/stream")
-async def chat_stream_endpoint(req: ChatRequest):
+async def chat_stream_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
     """
-    Streams output using Server-Sent Events (SSE).
+    Streams LLM output using Server-Sent Events (SSE).
+    Checks smart cache first to immediately return cached results on repeated queries.
     """
     async def stream_generator():
         start_time = time.time()
-        db = SessionLocal()
         try:
-            # 1. Smart Cache Check (Instant Return on Exact or Semantic Match)
+            # ──────────────────────────────────────────────────────────────────
+            # 1. SMART CACHE CHECK (Instant Return on Exact or Semantic Match)
+            # ──────────────────────────────────────────────────────────────────
             if settings.ENABLE_CACHE:
                 cached_entry, hit_type, sim_score = smart_cache.get(db, req.prompt)
+                
+                # If cached record exists, yield events immediately and skip LLM call
                 if cached_entry:
                     route_label = f"CACHE HIT ({hit_type})"
                     route_desc = f"Resolved from smart cache via {hit_type.lower()} matching (similarity: {sim_score:.2f})."
                     category = routing_engine.classifier.classify(req.prompt)
 
-                    # Send Routing Event
+                    # Step 1: Yield cache-hit and routing events to frontend
+                    yield f"data: {json.dumps({'event': 'cache-hit', 'route': route_label, 'reason': route_desc})}\n\n"
                     yield f"data: {json.dumps({'event': 'routing', 'route': route_label, 'reason': route_desc})}\n\n"
                     await asyncio.sleep(0.01)
 
-                    # Stream cached content rapidly
+                    # Step 2: Stream the cached text to frontend UI
                     cached_text = cached_entry.response_text
                     words = cached_text.split(" ")
                     for i, word in enumerate(words):
@@ -371,7 +385,7 @@ async def chat_stream_endpoint(req: ChatRequest):
 
                     latency = (time.time() - start_time) * 1000
 
-                    # Log Request & Response in DB
+                    # Step 3: Record transaction in database (0.0 token cost & latency)
                     db_req = RequestModel(
                         prompt=req.prompt,
                         routed_to="cache",
@@ -395,11 +409,13 @@ async def chat_stream_endpoint(req: ChatRequest):
                     db.add(db_resp)
                     db.commit()
 
-                    # Send Done Event
+                    # Step 4: Yield final done event and finish stream (no LLM calls made)
                     yield f"data: {json.dumps({'event': 'done', 'id': db_req.id, 'latency_ms': latency, 'prompt_tokens': cached_entry.prompt_tokens, 'completion_tokens': cached_entry.completion_tokens, 'estimated_cost': 0.0, 'route': route_label, 'confidence_score': round(sim_score, 2), 'intent': category, 'compute_backend': get_hardware_info()['compute_backend'], 'is_cached': True})}\n\n"
                     return
 
-            # 2. Cache Miss: Execute Router
+            # ──────────────────────────────────────────────────────────────────
+            # 2. CACHE MISS: Execute Hybrid LLM Routing Engine
+            # ──────────────────────────────────────────────────────────────────
             route_name, reason, estimates = routing_engine.route(req.prompt)
             local_model = req.local_model or settings.ACTIVE_LOCAL_MODEL
             remote_model = req.remote_model or settings.ACTIVE_REMOTE_MODEL
@@ -547,8 +563,9 @@ async def chat_stream_endpoint(req: ChatRequest):
 
             # Send final details event
             yield f"data: {json.dumps({'event': 'done', 'id': db_req.id, 'latency_ms': latency, 'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'estimated_cost': cost, 'route': final_route, 'confidence_score': confidence, 'intent': category, 'compute_backend': get_hardware_info()['compute_backend'], 'is_cached': False})}\n\n"
-        finally:
-            db.close()
+        except Exception:
+            db.rollback()
+            raise
 
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
@@ -687,7 +704,7 @@ def get_history(limit: int = 20, db: Session = Depends(get_db)):
             confidence_score=resp.confidence_score if resp else 1.0,
             is_cached=resp.is_cached if resp else False,
             draft_text=resp.draft_text if resp else None,
-            timestamp=req.timestamp
+            timestamp=_to_utc_timestamp(req.timestamp)
         ))
     return history
 
@@ -755,7 +772,7 @@ def get_benchmarks(limit: int = 10, db: Session = Depends(get_db)):
         BenchmarkSummary(
             id=b.id,
             benchmark_name=b.benchmark_name,
-            timestamp=b.timestamp,
+            timestamp=_to_utc_timestamp(b.timestamp),
             total_tasks=b.total_tasks,
             accuracy=b.accuracy,
             remote_tokens=b.remote_tokens,
