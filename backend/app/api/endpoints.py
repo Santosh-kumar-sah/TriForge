@@ -1,6 +1,7 @@
 import time
 import json
 import asyncio
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -635,6 +636,58 @@ def get_history(limit: int = 20, db: Session = Depends(get_db)):
         ))
     return history
 
+@router.delete("/history/old")
+@router.post("/history/cleanup")
+def delete_old_history(db: Session = Depends(get_db)):
+    """
+    Deletes all requests and associated responses created before today's date (keeps only today's data).
+    Also clears any orphaned responses.
+    """
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    old_reqs = db.query(RequestModel).filter(RequestModel.timestamp < today_start).all()
+    old_req_ids = [r.id for r in old_reqs]
+    deleted_responses = 0
+    deleted_requests = 0
+
+    if old_req_ids:
+        deleted_responses = db.query(ResponseModel).filter(
+            ResponseModel.request_id.in_(old_req_ids)
+        ).delete(synchronize_session=False)
+        deleted_requests = db.query(RequestModel).filter(
+            RequestModel.id.in_(old_req_ids)
+        ).delete(synchronize_session=False)
+
+    orphaned_resp = db.query(ResponseModel).filter(
+        ~ResponseModel.request_id.in_(db.query(RequestModel.id))
+    ).delete(synchronize_session=False)
+
+    db.commit()
+    return {
+        "status": "success",
+        "deleted_requests": deleted_requests,
+        "deleted_responses": deleted_responses + orphaned_resp,
+        "message": f"Successfully deleted {deleted_requests} old requests and {deleted_responses + orphaned_resp} responses created before today."
+    }
+
+@router.delete("/history/{request_id}")
+@router.delete("/requests/{request_id}")
+def delete_history_item(request_id: int, db: Session = Depends(get_db)):
+    """
+    Deletes a single request record and its corresponding response from the database.
+    """
+    req = db.query(RequestModel).filter(RequestModel.id == request_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail=f"Request record #{request_id} not found.")
+
+    db.query(ResponseModel).filter(ResponseModel.request_id == request_id).delete(synchronize_session=False)
+    db.delete(req)
+    db.commit()
+    return {
+        "status": "success",
+        "deleted_id": request_id,
+        "message": f"Request transaction #{request_id} deleted successfully."
+    }
+
 @router.post("/benchmark")
 def run_benchmark_endpoint(req: BenchmarkRunRequest, db: Session = Depends(get_db)):
     runner = BenchmarkRunner(db)
@@ -658,6 +711,81 @@ def get_benchmarks(limit: int = 10, db: Session = Depends(get_db)):
             config_json=b.config_json
         ) for b in b_records
     ]
+
+@router.delete("/benchmarks/old")
+def delete_old_benchmarks(db: Session = Depends(get_db)):
+    """
+    Deletes benchmark runs created before today's date.
+    """
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    deleted_benchmarks = db.query(BenchmarkModel).filter(
+        BenchmarkModel.timestamp < today_start
+    ).delete(synchronize_session=False)
+    db.commit()
+    return {
+        "status": "success",
+        "deleted_benchmarks": deleted_benchmarks,
+        "message": f"Successfully deleted {deleted_benchmarks} benchmark runs created before today."
+    }
+
+@router.delete("/benchmarks/{benchmark_id}")
+@router.delete("/benchmark/{benchmark_id}")
+def delete_benchmark_item(benchmark_id: int, db: Session = Depends(get_db)):
+    """
+    Deletes a specific benchmark sweep run by ID.
+    """
+    benchmark = db.query(BenchmarkModel).filter(BenchmarkModel.id == benchmark_id).first()
+    if not benchmark:
+        raise HTTPException(status_code=404, detail=f"Benchmark run #{benchmark_id} not found.")
+
+    db.delete(benchmark)
+    db.commit()
+    return {
+        "status": "success",
+        "deleted_id": benchmark_id,
+        "message": f"Benchmark run #{benchmark_id} deleted successfully."
+    }
+
+@router.post("/cleanup")
+@router.delete("/cleanup")
+def cleanup_database_endpoint(db: Session = Depends(get_db)):
+    """
+    Deletes all records from benchmarks and requests tables created before today's date,
+    and cleans up any orphaned responses.
+    """
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # 1. Clean old benchmarks
+    deleted_benchmarks = db.query(BenchmarkModel).filter(
+        BenchmarkModel.timestamp < today_start
+    ).delete(synchronize_session=False)
+
+    # 2. Clean old requests & responses
+    old_reqs = db.query(RequestModel).filter(RequestModel.timestamp < today_start).all()
+    old_req_ids = [r.id for r in old_reqs]
+    deleted_responses = 0
+    deleted_requests = 0
+    if old_req_ids:
+        deleted_responses = db.query(ResponseModel).filter(
+            ResponseModel.request_id.in_(old_req_ids)
+        ).delete(synchronize_session=False)
+        deleted_requests = db.query(RequestModel).filter(
+            RequestModel.id.in_(old_req_ids)
+        ).delete(synchronize_session=False)
+
+    # 3. Clean orphaned responses
+    orphaned_resp = db.query(ResponseModel).filter(
+        ~ResponseModel.request_id.in_(db.query(RequestModel.id))
+    ).delete(synchronize_session=False)
+
+    db.commit()
+    return {
+        "status": "success",
+        "deleted_benchmarks": deleted_benchmarks,
+        "deleted_requests": deleted_requests,
+        "deleted_responses": deleted_responses + orphaned_resp,
+        "message": f"Database cleaned up: {deleted_benchmarks} benchmarks, {deleted_requests} requests, {deleted_responses + orphaned_resp} responses removed."
+    }
 
 @router.get("/models")
 def get_supported_models():

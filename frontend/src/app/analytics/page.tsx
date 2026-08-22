@@ -11,7 +11,8 @@ import {
   Database,
   Search,
   Eye,
-  Info
+  Info,
+  Trash2
 } from "lucide-react";
 
 interface RequestHistoryItem {
@@ -32,6 +33,7 @@ interface RequestHistoryItem {
 export default function AnalyticsPage() {
   const [history, setHistory] = useState<RequestHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deletingOld, setDeletingOld] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   
@@ -52,6 +54,42 @@ export default function AnalyticsPage() {
     }
   };
 
+  const handleDeleteItem = async (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm(`Are you sure you want to delete request transaction #${id}?`)) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/history/${id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete request record.");
+      setHistory(prev => prev.filter(item => item.id !== id));
+      if (selectedItem?.id === id) {
+        setSelectedItem(null);
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to delete request record.");
+    }
+  };
+
+  const handleDeleteOldPrompts = async () => {
+    if (!confirm("Are you sure you want to delete all chat prompts and logs created before today? Only today's records will be kept.")) return;
+    setDeletingOld(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/history/old`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete old prompts.");
+      const data = await res.json();
+      alert(data.message || "Old prompts deleted successfully.");
+      await fetchHistory();
+      setSelectedItem(null);
+    } catch (err: any) {
+      alert(err.message || "Failed to delete old prompts.");
+    } finally {
+      setDeletingOld(false);
+    }
+  };
+
   useEffect(() => {
     fetchHistory();
   }, []);
@@ -64,18 +102,29 @@ export default function AnalyticsPage() {
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8">
       {/* Header */}
-      <div className="flex justify-between items-center border-b border-zinc-800 pb-5">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-zinc-800 pb-5">
         <div>
           <h1 className="text-3xl font-extrabold text-white tracking-tight">System Request History</h1>
           <p className="text-zinc-400 text-sm mt-1">Detailed transaction lists and query metadata inspections</p>
         </div>
-        <button 
-          onClick={fetchHistory}
-          className="bg-zinc-800 hover:bg-zinc-700 text-white font-semibold text-xs px-4 py-2.5 rounded-lg flex items-center gap-2 border border-zinc-700 transition"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          <span>Refresh List</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={handleDeleteOldPrompts}
+            disabled={deletingOld || loading}
+            className="bg-red-950/40 hover:bg-red-900/60 text-red-400 hover:text-red-300 font-semibold text-xs px-4 py-2.5 rounded-lg flex items-center gap-2 border border-red-800/60 transition active:scale-95 disabled:opacity-50 shadow-sm"
+          >
+            <Trash2 className={`w-3.5 h-3.5 ${deletingOld ? "animate-pulse" : ""}`} />
+            <span>{deletingOld ? "Deleting Old..." : "Delete Old Prompts"}</span>
+          </button>
+          <button 
+            onClick={fetchHistory}
+            disabled={loading || deletingOld}
+            className="bg-zinc-800 hover:bg-zinc-700 text-white font-semibold text-xs px-4 py-2.5 rounded-lg flex items-center gap-2 border border-zinc-700 transition active:scale-95"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+            <span>Refresh List</span>
+          </button>
+        </div>
       </div>
 
       {error ? (
@@ -160,16 +209,25 @@ export default function AnalyticsPage() {
                             ${item.estimated_cost.toFixed(4)}
                           </td>
                           <td className="p-4 text-right">
-                            <button 
-                              className="text-amber-500 hover:text-amber-400 font-bold flex items-center gap-1 ml-auto active:scale-95 transition"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedItem(item);
-                              }}
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                              Inspect
-                            </button>
+                            <div className="flex items-center justify-end gap-2">
+                              <button 
+                                className="text-amber-500 hover:text-amber-400 font-bold flex items-center gap-1 active:scale-95 transition"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedItem(item);
+                                }}
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>Inspect</span>
+                              </button>
+                              <button
+                                title="Delete this prompt"
+                                className="text-zinc-500 hover:text-red-400 p-1 rounded hover:bg-red-950/30 transition active:scale-95"
+                                onClick={(e) => handleDeleteItem(item.id, e)}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))
