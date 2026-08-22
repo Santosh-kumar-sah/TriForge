@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 import os
 from typing import List, Optional
 
-from app.database.session import get_db
+from app.database.session import get_db, SessionLocal
 from app.database.models import (
     RequestModel, ResponseModel, BenchmarkModel, CacheEventModel, 
     RouterThresholdModel, RouterAdjustmentLogModel, ProviderFailoverLogModel,
@@ -319,7 +319,7 @@ def chat_endpoint(req: ChatRequest, request: Request, db: Session = Depends(get_
     db.commit()
 
     # Save in Cache
-    if settings.ENABLE_CACHE and ans and not ans.startswith("Error"):
+    if settings.ENABLE_CACHE and ans and not smart_cache._is_error_response(ans):
         smart_cache.set(db, req.prompt, ans, remote_model if "remote" in final_route.lower() else local_model, p_tok, c_tok, latency)
 
     return ChatResponse(
@@ -341,83 +341,112 @@ def chat_endpoint(req: ChatRequest, request: Request, db: Session = Depends(get_
     )
 
 @router.post("/chat/stream")
-async def chat_stream_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
+async def chat_stream_endpoint(req: ChatRequest):
     """
     Streams output using Server-Sent Events (SSE).
     """
-    route_name, reason, estimates = routing_engine.route(req.prompt)
-    local_model = req.local_model or settings.ACTIVE_LOCAL_MODEL
-    remote_model = req.remote_model or settings.ACTIVE_REMOTE_MODEL
-    remote_model = resolve_remote_model(remote_model)
-    threshold = req.threshold or settings.DEFAULT_CONSISTENCY_THRESHOLD
-
     async def stream_generator():
         start_time = time.time()
-        p_tok, c_tok = 0, 0
-        final_route = route_name.upper()
-        route_reason = reason
-        escalated = False
-        draft_text = None
-        ans_accumulator = []
-        confidence = 1.0
+        db = SessionLocal()
+        try:
+            # 1. Smart Cache Check (Instant Return on Exact or Semantic Match)
+            if settings.ENABLE_CACHE:
+                cached_entry, hit_type, sim_score = smart_cache.get(db, req.prompt)
+                if cached_entry:
+                    route_label = f"CACHE HIT ({hit_type})"
+                    route_desc = f"Resolved from smart cache via {hit_type.lower()} matching (similarity: {sim_score:.2f})."
+                    category = routing_engine.classifier.classify(req.prompt)
 
-        # Send Routing Decision Event
-        yield f"data: {json.dumps({'event': 'routing', 'route': route_name, 'reason': reason})}\n\n"
-        await asyncio.sleep(0.01)
-
-        category = estimates.get("category", "general_qa")
-        word_count = len(req.prompt.split())
-
-        if route_name == "local":
-            # Bypass self-consistency check for low-risk, conversational, general QA, or short tasks (<= 15 words)
-            bypass_consistency = (
-                category in ["conversation", "general_qa", "translation", "creative_writing", "summarization", "extraction"] 
-                or word_count <= 15
-            )
-            
-            if bypass_consistency:
-                s1, total_p, total_c = groq_local.generate(req.prompt, local_model)
-                sim = 1.0
-                p_tok += total_p
-                c_tok += total_c
-                draft_text = s1
-                confidence = 1.0
-            else:
-                # Run self-consistency check for high-stakes math/logic reasoning tasks
-                sim, s1, s2, total_p, total_c = consistency_checker.check_consistency(req.prompt, local_model, threshold)
-                p_tok += total_p
-                c_tok += total_c
-                draft_text = s1
-                confidence = sim
-
-            # Check if local model generation failed with an error message (e.g. rate limit 429)
-            if s1 and s1.startswith("Error"):
-                final_route = "REMOTE (FALLBACK - LOCAL UNAVAILABLE)"
-                route_reason = f"Local provider rate limited or unavailable ({s1[:60]}...). Executed remote fallback directly."
-                prov = get_remote_provider(remote_model)
-                stream = prov.generate_stream(req.prompt, remote_model)
-                chunk = {}
-                for chunk in stream:
-                    delta = chunk.get("text", "")
-                    ans_accumulator.append(delta)
-                    yield f"data: {json.dumps({'event': 'content', 'text': delta})}\n\n"
-                    await asyncio.sleep(0.005)
-                p_tok += chunk.get("prompt_tokens", 0)
-                c_tok += chunk.get("completion_tokens", 0)
-                confidence = 1.0
-            else:
-                flagged_info = hallucination_detector.check_hallucination_signals(s1)
-
-                if sim < threshold or flagged_info["flagged"]:
-                    escalated = True
-                    final_route = "LOCAL -> ESCALATED TO REMOTE"
-                    route_reason = (
-                        f"Escalated: Similarity ({sim:.2f}) < threshold ({threshold:.2f}) "
-                        f"or flagged: {flagged_info['reasons']}"
-                    )
-                    yield f"data: {json.dumps({'event': 'escalation', 'reason': route_reason, 'draft': s1})}\n\n"
+                    # Send Routing Event
+                    yield f"data: {json.dumps({'event': 'routing', 'route': route_label, 'reason': route_desc})}\n\n"
                     await asyncio.sleep(0.01)
 
+                    # Stream cached content rapidly
+                    cached_text = cached_entry.response_text
+                    words = cached_text.split(" ")
+                    for i, word in enumerate(words):
+                        suffix = " " if i < len(words) - 1 else ""
+                        yield f"data: {json.dumps({'event': 'content', 'text': word + suffix})}\n\n"
+                        await asyncio.sleep(0.005)
+
+                    latency = (time.time() - start_time) * 1000
+
+                    # Log Request & Response in DB
+                    db_req = RequestModel(
+                        prompt=req.prompt,
+                        routed_to="cache",
+                        final_route=route_label,
+                        route_reason=route_desc,
+                        latency_ms=latency,
+                        prompt_tokens=cached_entry.prompt_tokens,
+                        completion_tokens=cached_entry.completion_tokens,
+                        cost=0.0
+                    )
+                    db.add(db_req)
+                    db.flush()
+
+                    db_resp = ResponseModel(
+                        request_id=db_req.id,
+                        response_text=cached_text,
+                        confidence_score=round(sim_score, 2),
+                        is_cached=True,
+                        draft_text=None
+                    )
+                    db.add(db_resp)
+                    db.commit()
+
+                    # Send Done Event
+                    yield f"data: {json.dumps({'event': 'done', 'id': db_req.id, 'latency_ms': latency, 'prompt_tokens': cached_entry.prompt_tokens, 'completion_tokens': cached_entry.completion_tokens, 'estimated_cost': 0.0, 'route': route_label, 'confidence_score': round(sim_score, 2), 'intent': category, 'compute_backend': get_hardware_info()['compute_backend'], 'is_cached': True})}\n\n"
+                    return
+
+            # 2. Cache Miss: Execute Router
+            route_name, reason, estimates = routing_engine.route(req.prompt)
+            local_model = req.local_model or settings.ACTIVE_LOCAL_MODEL
+            remote_model = req.remote_model or settings.ACTIVE_REMOTE_MODEL
+            remote_model = resolve_remote_model(remote_model)
+            threshold = req.threshold or settings.DEFAULT_CONSISTENCY_THRESHOLD
+
+            p_tok, c_tok = 0, 0
+            final_route = route_name.upper()
+            route_reason = reason
+            escalated = False
+            draft_text = None
+            ans_accumulator = []
+            confidence = 1.0
+
+            # Send Routing Decision Event
+            yield f"data: {json.dumps({'event': 'routing', 'route': route_name, 'reason': reason})}\n\n"
+            await asyncio.sleep(0.01)
+
+            category = estimates.get("category", "general_qa")
+            word_count = len(req.prompt.split())
+
+            if route_name == "local":
+                # Bypass self-consistency check for low-risk, conversational, general QA, or short tasks (<= 15 words)
+                bypass_consistency = (
+                    category in ["conversation", "general_qa", "translation", "creative_writing", "summarization", "extraction"] 
+                    or word_count <= 15
+                )
+                
+                if bypass_consistency:
+                    s1, total_p, total_c = groq_local.generate(req.prompt, local_model)
+                    sim = 1.0
+                    p_tok += total_p
+                    c_tok += total_c
+                    draft_text = s1
+                    confidence = 1.0
+                else:
+                    # Run self-consistency check for high-stakes math/logic reasoning tasks
+                    sim, s1, s2, total_p, total_c = consistency_checker.check_consistency(req.prompt, local_model, threshold)
+                    p_tok += total_p
+                    c_tok += total_c
+                    draft_text = s1
+                    confidence = sim
+
+                # Check if local model generation failed with an error message (e.g. rate limit 429)
+                if s1 and smart_cache._is_error_response(s1):
+                    final_route = "REMOTE (FALLBACK - LOCAL UNAVAILABLE)"
+                    route_reason = f"Local provider rate limited or unavailable ({s1[:60]}...). Executed remote fallback directly."
                     prov = get_remote_provider(remote_model)
                     stream = prov.generate_stream(req.prompt, remote_model)
                     chunk = {}
@@ -428,72 +457,98 @@ async def chat_stream_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
                         await asyncio.sleep(0.005)
                     p_tok += chunk.get("prompt_tokens", 0)
                     c_tok += chunk.get("completion_tokens", 0)
+                    confidence = 1.0
                 else:
-                    # Stream trusted local response to UI
-                    yield f"data: {json.dumps({'event': 'status', 'text': 'Streaming trusted local response...'})}\n\n"
-                    await asyncio.sleep(0.01)
-                    for word in s1.split(" "):
-                        ans_accumulator.append(word + " ")
-                        yield f"data: {json.dumps({'event': 'content', 'text': word + ' '})}\n\n"
+                    flagged_info = hallucination_detector.check_hallucination_signals(s1)
+
+                    if sim < threshold or flagged_info["flagged"]:
+                        escalated = True
+                        final_route = "LOCAL -> ESCALATED TO REMOTE"
+                        route_reason = (
+                            f"Escalated: Similarity ({sim:.2f}) < threshold ({threshold:.2f}) "
+                            f"or flagged: {flagged_info['reasons']}"
+                        )
+                        yield f"data: {json.dumps({'event': 'escalation', 'reason': route_reason, 'draft': s1})}\n\n"
                         await asyncio.sleep(0.01)
-        else:
-            # Direct remote stream
-            prompt_to_send = req.prompt
-            if settings.ENABLE_PROMPT_COMPRESSION:
-                prompt_to_send = prompt_compressor.compress(req.prompt)
-                route_reason += " (Prompt Compressed)"
 
-            prov = get_remote_provider(remote_model)
-            stream = prov.generate_stream(prompt_to_send, remote_model)
-            
-            # Iterate stream
-            chunk = {}
-            for chunk in stream:
-                delta = chunk.get("text", "")
-                ans_accumulator.append(delta)
-                yield f"data: {json.dumps({'event': 'content', 'text': delta})}\n\n"
-                await asyncio.sleep(0.005)
-            
-            p_tok += chunk.get("prompt_tokens", 0)
-            c_tok += chunk.get("completion_tokens", 0)
+                        prov = get_remote_provider(remote_model)
+                        stream = prov.generate_stream(req.prompt, remote_model)
+                        chunk = {}
+                        for chunk in stream:
+                            delta = chunk.get("text", "")
+                            ans_accumulator.append(delta)
+                            yield f"data: {json.dumps({'event': 'content', 'text': delta})}\n\n"
+                            await asyncio.sleep(0.005)
+                        p_tok += chunk.get("prompt_tokens", 0)
+                        c_tok += chunk.get("completion_tokens", 0)
+                    else:
+                        # Stream trusted local response to UI
+                        yield f"data: {json.dumps({'event': 'status', 'text': 'Streaming trusted local response...'})}\n\n"
+                        await asyncio.sleep(0.01)
+                        for word in s1.split(" "):
+                            ans_accumulator.append(word + " ")
+                            yield f"data: {json.dumps({'event': 'content', 'text': word + ' '})}\n\n"
+                            await asyncio.sleep(0.01)
+            else:
+                # Direct remote stream
+                prompt_to_send = req.prompt
+                if settings.ENABLE_PROMPT_COMPRESSION:
+                    prompt_to_send = prompt_compressor.compress(req.prompt)
+                    route_reason += " (Prompt Compressed)"
 
-        latency = (time.time() - start_time) * 1000
-        cost = 0.0
-        if "remote" in final_route.lower() or escalated:
-            cost = (p_tok + c_tok) * (0.20 / 1_000_000)
+                prov = get_remote_provider(remote_model)
+                stream = prov.generate_stream(prompt_to_send, remote_model)
+                
+                # Iterate stream
+                chunk = {}
+                for chunk in stream:
+                    delta = chunk.get("text", "")
+                    ans_accumulator.append(delta)
+                    yield f"data: {json.dumps({'event': 'content', 'text': delta})}\n\n"
+                    await asyncio.sleep(0.005)
+                
+                p_tok += chunk.get("prompt_tokens", 0)
+                c_tok += chunk.get("completion_tokens", 0)
 
-        full_ans = "".join(ans_accumulator)
+            latency = (time.time() - start_time) * 1000
+            cost = 0.0
+            if "remote" in final_route.lower() or escalated:
+                cost = (p_tok + c_tok) * (0.20 / 1_000_000)
 
-        # Database writing wrapped in async run
-        db_req = RequestModel(
-            prompt=req.prompt,
-            routed_to=route_name,
-            final_route=final_route,
-            route_reason=route_reason,
-            latency_ms=latency,
-            prompt_tokens=p_tok,
-            completion_tokens=c_tok,
-            cost=cost
-        )
-        db.add(db_req)
-        db.flush()
+            full_ans = "".join(ans_accumulator)
 
-        db_resp = ResponseModel(
-            request_id=db_req.id,
-            response_text=full_ans,
-            confidence_score=confidence,
-            is_cached=False,
-            draft_text=draft_text
-        )
-        db.add(db_resp)
-        db.commit()
+            # Database writing
+            db_req = RequestModel(
+                prompt=req.prompt,
+                routed_to=route_name,
+                final_route=final_route,
+                route_reason=route_reason,
+                latency_ms=latency,
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                cost=cost
+            )
+            db.add(db_req)
+            db.flush()
 
-        # Cache saving
-        if settings.ENABLE_CACHE and full_ans and not full_ans.startswith("Error"):
-            smart_cache.set(db, req.prompt, full_ans, remote_model if "remote" in final_route.lower() else local_model, p_tok, c_tok, latency)
+            db_resp = ResponseModel(
+                request_id=db_req.id,
+                response_text=full_ans,
+                confidence_score=confidence,
+                is_cached=False,
+                draft_text=draft_text
+            )
+            db.add(db_resp)
+            db.commit()
 
-        # Send final details event
-        yield f"data: {json.dumps({'event': 'done', 'id': db_req.id, 'latency_ms': latency, 'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'estimated_cost': cost, 'route': final_route, 'confidence_score': confidence, 'intent': category, 'compute_backend': get_hardware_info()['compute_backend']})}\n\n"
+            # Cache saving
+            if settings.ENABLE_CACHE and full_ans and not smart_cache._is_error_response(full_ans):
+                smart_cache.set(db, req.prompt, full_ans, remote_model if "remote" in final_route.lower() else local_model, p_tok, c_tok, latency)
+
+            # Send final details event
+            yield f"data: {json.dumps({'event': 'done', 'id': db_req.id, 'latency_ms': latency, 'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'estimated_cost': cost, 'route': final_route, 'confidence_score': confidence, 'intent': category, 'compute_backend': get_hardware_info()['compute_backend'], 'is_cached': False})}\n\n"
+        finally:
+            db.close()
 
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
 

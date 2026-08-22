@@ -73,10 +73,25 @@ class SmartCache:
             db.rollback()
 
     def _is_error_response(self, text: str) -> bool:
-        if not text:
+        if not text or not text.strip():
             return True
-        t = text.lower()
-        return "stream error" in t or "404 client error" in t or "429 client error" in t or t.startswith("error")
+        t = text.lower().strip()
+        error_indicators = [
+            "error querying",
+            "stream error",
+            "404 client error",
+            "429 client error",
+            "rate limit",
+            "error: fireworks_api_key",
+            "internal server error",
+            "connection error",
+        ]
+        if any(indicator in t for indicator in error_indicators):
+            return True
+        # Specific provider exception format: "Error: ..." or "Error code: ..."
+        if (t.startswith("error:") or t.startswith("error code:") or t.startswith("error -") or t.startswith("error [")) and len(t) < 250:
+            return True
+        return False
 
     def get(self, db: Session, prompt: str, threshold: Optional[float] = None) -> Tuple[Optional[CacheModel], str, float]:
         """
@@ -86,49 +101,56 @@ class SmartCache:
 
         Returns: (CacheModel | None, hit_type ("EXACT" | "SEMANTIC" | "MISS"), similarity_score)
         """
-        sim_threshold = threshold if threshold is not None else getattr(settings, "SEMANTIC_CACHE_THRESHOLD", self.semantic_threshold)
+        try:
+            prompt_clean = prompt.strip() if prompt else ""
+            if not prompt_clean:
+                return None, "MISS", 0.0
 
-        # Stage 1: Exact Match Check
-        p_hash = self._hash_prompt(prompt)
-        exact_entry = db.query(CacheModel).filter(CacheModel.prompt_hash == p_hash).first()
-        if exact_entry:
-            if self._is_error_response(exact_entry.response_text):
+            sim_threshold = threshold if threshold is not None else getattr(settings, "SEMANTIC_CACHE_THRESHOLD", self.semantic_threshold)
+
+            # Stage 1: Exact Match Check
+            p_hash = self._hash_prompt(prompt_clean)
+            exact_entry = db.query(CacheModel).filter(CacheModel.prompt_hash == p_hash).first()
+            if exact_entry:
+                if self._is_error_response(exact_entry.response_text):
+                    try:
+                        db.delete(exact_entry)
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+                else:
+                    self._log_event(db, "EXACT", 1.0)
+                    return exact_entry, "EXACT", 1.0
+
+            # Stage 2: Semantic Similarity Check against recent cache entries
+            query_vec = self._compute_embedding(prompt_clean)
+            recent_entries = db.query(CacheModel).order_by(CacheModel.timestamp.desc()).limit(200).all()
+
+            best_match = None
+            best_score = 0.0
+
+            for entry in recent_entries:
+                if not entry.embedding_json:
+                    continue
+                if self._is_error_response(entry.response_text):
+                    continue
                 try:
-                    db.delete(exact_entry)
-                    db.commit()
+                    cached_vec = json.loads(entry.embedding_json)
+                    score = self._cosine_similarity(query_vec, cached_vec)
+                    if score > best_score:
+                        best_score = score
+                        best_match = entry
                 except Exception:
-                    db.rollback()
-            else:
-                self._log_event(db, "EXACT", 1.0)
-                return exact_entry, "EXACT", 1.0
+                    continue
 
-        # Stage 2: Semantic Similarity Check against recent cache entries
-        query_vec = self._compute_embedding(prompt)
-        recent_entries = db.query(CacheModel).order_by(CacheModel.timestamp.desc()).limit(200).all()
+            if best_match and best_score >= sim_threshold:
+                self._log_event(db, "SEMANTIC", best_score)
+                return best_match, "SEMANTIC", best_score
 
-        best_match = None
-        best_score = 0.0
-
-        for entry in recent_entries:
-            if not entry.embedding_json:
-                continue
-            if self._is_error_response(entry.response_text):
-                continue
-            try:
-                cached_vec = json.loads(entry.embedding_json)
-                score = self._cosine_similarity(query_vec, cached_vec)
-                if score > best_score:
-                    best_score = score
-                    best_match = entry
-            except Exception:
-                continue
-
-        if best_match and best_score >= sim_threshold:
-            self._log_event(db, "SEMANTIC", best_score)
-            return best_match, "SEMANTIC", best_score
-
-        self._log_event(db, "MISS", 0.0)
-        return None, "MISS", 0.0
+            self._log_event(db, "MISS", 0.0)
+            return None, "MISS", 0.0
+        except Exception:
+            return None, "MISS", 0.0
 
     def set(
         self, 
@@ -142,43 +164,50 @@ class SmartCache:
         cache_type: str = "exact"
     ) -> Optional[CacheModel]:
         """Caches a prompt-response pair along with its vector embedding."""
-        if self._is_error_response(response_text):
+        if not prompt or not response_text or self._is_error_response(response_text):
             return None
-        p_hash = self._hash_prompt(prompt)
-        vec = self._compute_embedding(prompt)
+            
+        prompt_clean = prompt.strip()
+        p_hash = self._hash_prompt(prompt_clean)
+        vec = self._compute_embedding(prompt_clean)
         vec_json = json.dumps(vec)
         
-        existing = db.query(CacheModel).filter(CacheModel.prompt_hash == p_hash).first()
-        if existing:
-            existing.response_text = response_text
-            existing.model_name = model_name
-            existing.prompt_tokens = prompt_tokens
-            existing.completion_tokens = completion_tokens
-            existing.latency_ms = latency_ms
-            existing.embedding_json = vec_json
-            existing.cache_type = cache_type
-            existing.timestamp = datetime.utcnow()
-            db.commit()
-            db.refresh(existing)
-            return existing
-
-        cache_entry = CacheModel(
-            prompt_hash=p_hash,
-            prompt=prompt,
-            response_text=response_text,
-            model_name=model_name,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            latency_ms=latency_ms,
-            embedding_json=vec_json,
-            cache_type=cache_type
-        )
-        
         try:
+            existing = db.query(CacheModel).filter(CacheModel.prompt_hash == p_hash).first()
+            if existing:
+                existing.prompt = prompt_clean
+                existing.response_text = response_text
+                existing.model_name = model_name
+                existing.prompt_tokens = prompt_tokens
+                existing.completion_tokens = completion_tokens
+                existing.latency_ms = latency_ms
+                existing.embedding_json = vec_json
+                existing.cache_type = cache_type
+                existing.timestamp = datetime.utcnow()
+                db.commit()
+                db.refresh(existing)
+                return existing
+
+            cache_entry = CacheModel(
+                prompt_hash=p_hash,
+                prompt=prompt_clean,
+                response_text=response_text,
+                model_name=model_name,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                latency_ms=latency_ms,
+                embedding_json=vec_json,
+                cache_type=cache_type,
+                timestamp=datetime.utcnow()
+            )
+            
             db.add(cache_entry)
             db.commit()
             db.refresh(cache_entry)
             return cache_entry
         except Exception:
             db.rollback()
-            return db.query(CacheModel).filter(CacheModel.prompt_hash == p_hash).first()
+            try:
+                return db.query(CacheModel).filter(CacheModel.prompt_hash == p_hash).first()
+            except Exception:
+                return None

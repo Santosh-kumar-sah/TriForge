@@ -444,7 +444,7 @@ export default function ChatPage() {
                         {msg.route && (
                           <div className="mt-3 pt-2.5 border-t border-zinc-800/80 flex flex-wrap items-center gap-2 text-[11px]">
                             <span className="bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 text-zinc-300 font-semibold flex items-center gap-1.5 shadow-sm">
-                              <span className={`w-1.5 h-1.5 rounded-full ${msg.route.includes("ESCALATED") ? "bg-red-400" : msg.route.includes("REMOTE") ? "bg-blue-400" : "bg-emerald-400"}`} />
+                              <span className={`w-1.5 h-1.5 rounded-full ${msg.route.includes("ESCALATED") ? "bg-red-400" : msg.route.includes("REMOTE") ? "bg-blue-400" : msg.route.includes("CACHE") ? "bg-purple-400" : "bg-emerald-400"}`} />
                               Routed to <strong className="text-white uppercase">{msg.route}</strong>
                             </span>
                             <span className="bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 text-zinc-400 font-semibold shadow-sm">

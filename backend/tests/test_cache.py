@@ -70,3 +70,41 @@ def test_semantic_cache_hit(db_session):
     assert hit_type in ("EXACT", "SEMANTIC")
     assert score >= 0.85
     assert hit.response_text == response
+
+def test_legitimate_response_about_errors_not_filtered(db_session):
+    cache = SmartCache()
+    prompt = "How does error handling work in Python?"
+    response = "Errors in Python can be handled using try and except blocks."
+    
+    saved = cache.set(
+        db=db_session,
+        prompt=prompt,
+        response_text=response,
+        model_name="mock-model",
+        prompt_tokens=10,
+        completion_tokens=15,
+        latency_ms=50.0
+    )
+    assert saved is not None
+    
+    hit, hit_type, score = cache.get(db_session, prompt)
+    assert hit is not None
+    assert hit_type == "EXACT"
+    assert hit.response_text == response
+
+def test_provider_error_is_filtered(db_session):
+    cache = SmartCache()
+    prompt = "Test prompt"
+    error_response = "Error querying local model: Connection refused"
+    
+    saved = cache.set(
+        db=db_session,
+        prompt=prompt,
+        response_text=error_response,
+        model_name="mock-model",
+        prompt_tokens=0,
+        completion_tokens=0,
+        latency_ms=10.0
+    )
+    assert saved is None
+

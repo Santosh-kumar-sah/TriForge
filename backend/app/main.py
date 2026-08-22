@@ -6,6 +6,7 @@ import logging
 
 from app.config import settings
 from app.database.session import engine, Base
+from app.database import models  # Ensure all SQLAlchemy models are registered
 from app.api.endpoints import router as api_router
 
 # Setup Logging
