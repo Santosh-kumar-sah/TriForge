@@ -19,8 +19,8 @@ class ConsistencyChecker:
 
         # Sample concurrently using ThreadPoolExecutor to optimize latency
         with ThreadPoolExecutor(max_workers=2) as executor:
-            future1 = executor.submit(self.local_provider.generate, prompt, target_model, {"temperature": 0.7})
-            future2 = executor.submit(self.local_provider.generate, prompt, target_model, {"temperature": 0.7})
+            future1 = executor.submit(self.local_provider.generate, prompt, target_model, {"temperature": 0.7, "seed": 42})
+            future2 = executor.submit(self.local_provider.generate, prompt, target_model, {"temperature": 0.7, "seed": 43})
 
             sample1, s1_p, s1_c = future1.result()
             sample2, s2_p, s2_c = future2.result()

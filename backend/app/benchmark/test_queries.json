@@ -9,7 +9,7 @@
     "id": 2,
     "category": "factual",
     "task": "Who painted the Mona Lisa?",
-    "expected": ["da vinci", "leonardo"]
+    "expected": ["leonardo"]
   },
   {
     "id": 3,
@@ -39,6 +39,84 @@
     "id": 7,
     "category": "reasoning",
     "task": "If all roses are flowers and some flowers fade quickly, do all roses fade quickly?",
-    "expected": ["no", "not necessarily"]
+    "expected": ["no"]
+  },
+  {
+    "id": 8,
+    "category": "general_qa",
+    "task": "What is the capital of Japan?",
+    "expected": ["tokyo"]
+  },
+  {
+    "id": 9,
+    "category": "factual",
+    "task": "Which planet in our solar system is known as the Red Planet?",
+    "expected": ["mars"]
+  },
+  {
+    "id": 10,
+    "category": "math",
+    "task": "Solve the algebraic equation: 3x + 7 = 22. What is the value of x?",
+    "expected": ["5"]
+  },
+  {
+    "id": 11,
+    "category": "general_qa",
+    "task": "What is the largest ocean on Earth?",
+    "expected": ["pacific"]
+  },
+  {
+    "id": 12,
+    "category": "factual",
+    "task": "In which year did World War II end?",
+    "expected": ["1945"]
+  },
+  {
+    "id": 13,
+    "category": "general_qa",
+    "task": "What is the official currency of Japan?",
+    "expected": ["yen"]
+  },
+  {
+    "id": 14,
+    "category": "math",
+    "task": "What is the square root of 144?",
+    "expected": ["12"]
+  },
+  {
+    "id": 15,
+    "category": "factual",
+    "task": "Who wrote the play 'Romeo and Juliet'?",
+    "expected": ["shakespeare"]
+  },
+  {
+    "id": 16,
+    "category": "coding",
+    "task": "What standard Python keyword is used to define a custom function?",
+    "expected": ["def"]
+  },
+  {
+    "id": 17,
+    "category": "general_qa",
+    "task": "What is the capital city of Germany?",
+    "expected": ["berlin"]
+  },
+  {
+    "id": 18,
+    "category": "factual",
+    "task": "What is the hardest natural substance known on Earth?",
+    "expected": ["diamond"]
+  },
+  {
+    "id": 19,
+    "category": "general_qa",
+    "task": "Which chemical element is represented by the symbol 'O' on the periodic table?",
+    "expected": ["oxygen"]
+  },
+  {
+    "id": 20,
+    "category": "factual",
+    "task": "Who was the first person to step on the Moon?",
+    "expected": ["armstrong"]
   }
 ]

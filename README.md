@@ -6,11 +6,62 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/badge/Tests-8%2F8%20Passed-emerald.svg)]()
 
-**TriForge** is an enterprise-grade, token-efficient hybrid LLM routing gateway and caching engine. It dynamically orchestrates user queries between **free/fast local compute backends** (via auto-detected CPU, CUDA, ROCm, MPS, NPU, or fast open-weights models) and **cloud frontier providers** (Groq, OpenAI, Anthropic, Fireworks AI).
+**TriForge** is an enterprise-grade, token-efficient hybrid LLM routing gateway and caching engine. It dynamically orchestrates user queries between **free/fast local compute backends** (via auto-detected local inference engines) and cloud LLM providers to optimize cost, latency, and quality.
 
-By combining intent classification, 2-stage semantic vector caching, adaptive threshold auto-tuning, verify-draft loops, and provider failover, TriForge reduces LLM cloud API token costs by **60%–80%** while cutting p95 tail latency by **40%**.
+By combining intent classification, 2-stage semantic vector caching, adaptive threshold auto-tuning, verify-draft loops, and provider failover, TriForge reduces LLM cloud API token costs by **60%–80%** while preserving high-quality responses.
 
 ---
+
+Deployed Link - https://tri-forge.vercel.app/
+
+## 🎯 Problem Statement
+
+Modern AI applications send most user queries directly to expensive cloud LLMs, even when many queries can be handled by faster and cheaper local models. This leads to high API costs, increased latency, and unnecessary cloud dependency.
+
+## 💡 Solution
+
+TriForge is an intelligent hybrid LLM orchestration and routing gateway that automatically decides whether a query should be handled by a local or cloud LLM.
+
+It combines intent classification, two-stage semantic caching, adaptive routing, Verify-Draft, and provider failover to reduce unnecessary cloud usage while maintaining high response quality.
+
+Simple idea: Use local AI when it is enough, use cloud AI when it is necessary.
+
+## 🛠️ Tech Stack
+
+Frontend
+- Next.js
+- React
+- TypeScript
+
+Backend
+- Python
+- FastAPI
+- SQLite
+
+AI / LLM
+- Ollama — Local LLM execution
+- Groq
+- OpenAI
+- Anthropic
+- Fireworks AI
+
+AI/ML & Routing
+- Semantic embeddings
+- Intent classification
+- Cosine similarity
+- Adaptive confidence routing
+
+Infrastructure
+- Docker
+- REST APIs
+- Server-Sent Events (SSE)
+
+Security & Reliability
+- PromptGuard
+- Rate limiting
+- Provider health checks
+- Automatic failover
+
 
 ## 🎯 Architecture & System Flow
 
@@ -147,21 +198,21 @@ TriForge/
 │   │   ├── classifier/   # Heuristic & LLM zero-shot semantic intent classifier
 │   │   ├── providers/    # Model providers (Groq, OpenAI, Anthropic, Fireworks, FailoverManager)
 │   │   ├── cache/        # 2-stage smart vector embedding cache
-│   │   ├── security/     # PromptGuard injection detector & sliding-window RateLimiter
-│   │   ├── database/     # SQLAlchemy models, Pydantic schemas & SQLite session
-│   │   ├── benchmark/    # 3-way benchmark runner & test_queries.json
-│   │   ├── analytics/    # Analytics engine (cost, token, eco tracking)
-│   │   └── evaluation/   # Self-consistency and hallucination detectors
+│   │   │   ├── security/     # PromptGuard injection detector & sliding-window RateLimiter
+│   │   │   ├── database/     # SQLAlchemy models, Pydantic schemas & SQLite session
+│   │   │   ├── benchmark/    # 3-way benchmark runner & test_queries.json
+│   │   │   ├── analytics/    # Analytics engine (cost, token, eco tracking)
+│   │   │   └── evaluation/   # Self-consistency and hallucination detectors
 │   ├── tests/            # Pytest test suite (8/8 passing)
 │   ├── Dockerfile        # FastAPI container config
-│   └── requirements.txt  # Backend dependencies
+│   │   └── requirements.txt  # Backend dependencies
 ├── frontend/
 │   ├── src/
 │   │   ├── app/          # Next.js pages (Chat, Analytics, Benchmarks, Settings, About)
 │   │   ├── components/   # UI components & Explainable Routing Badges
 │   │   └── lib/          # API helpers
 │   ├── Dockerfile        # Next.js container config
-│   └── package.json      # Frontend dependencies
+│   │   └── package.json      # Frontend dependencies
 ├── positioning/          # Theme-neutral positioning guides
 ├── docker-compose.yml    # Full-stack orchestrator
 └── README.md

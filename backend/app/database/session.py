@@ -35,6 +35,35 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 class Base(DeclarativeBase):
     pass
 
+def init_db_migrations():
+    """
+    Ensure newly added columns (user_id, user_email, etc.) exist in existing database tables.
+    """
+    with engine.begin() as conn:
+        Base.metadata.create_all(bind=conn)
+        if is_sqlite:
+            # Check requests table columns
+            try:
+                result = conn.execute(text("PRAGMA table_info(requests)"))
+                cols = [row[1] for row in result.fetchall()]
+                if "user_id" not in cols:
+                    conn.execute(text("ALTER TABLE requests ADD COLUMN user_id VARCHAR(100)"))
+                if "user_email" not in cols:
+                    conn.execute(text("ALTER TABLE requests ADD COLUMN user_email VARCHAR(150)"))
+            except Exception:
+                pass
+
+            # Check benchmarks table columns
+            try:
+                result = conn.execute(text("PRAGMA table_info(benchmarks)"))
+                b_cols = [row[1] for row in result.fetchall()]
+                if "user_id" not in b_cols:
+                    conn.execute(text("ALTER TABLE benchmarks ADD COLUMN user_id VARCHAR(100)"))
+                if "user_email" not in b_cols:
+                    conn.execute(text("ALTER TABLE benchmarks ADD COLUMN user_email VARCHAR(150)"))
+            except Exception:
+                pass
+
 def get_db():
     db = SessionLocal()
     try:

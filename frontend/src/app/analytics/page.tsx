@@ -11,7 +11,8 @@ import {
   Database,
   Search,
   Eye,
-  Info
+  Info,
+  Trash2
 } from "lucide-react";
 
 interface RequestHistoryItem {
@@ -29,7 +30,10 @@ interface RequestHistoryItem {
   timestamp: string;
 }
 
+import { useAuth } from "@/context/AuthContext";
+
 export default function AnalyticsPage() {
+  const { user, authHeaders } = useAuth();
   const [history, setHistory] = useState<RequestHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +45,10 @@ export default function AnalyticsPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/history?limit=30`);
+      const emailQuery = user?.email ? `&user_email=${encodeURIComponent(user.email)}` : "";
+      const res = await fetch(`${API_BASE_URL}/api/history?limit=30${emailQuery}`, {
+        headers: authHeaders
+      });
       if (!res.ok) throw new Error("Failed to fetch request history.");
       const json = await res.json();
       setHistory(json);
@@ -49,6 +56,47 @@ export default function AnalyticsPage() {
       setError(err.message || "Failed to reach backend API.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchHistory();
+  }, [user?.email]);
+
+  const handleDeleteHistoryItem = async (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("Are you sure you want to delete this prompt from history?")) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/history/${id}`, {
+        method: "DELETE",
+        headers: authHeaders
+      });
+      if (!res.ok) throw new Error("Failed to delete history item.");
+      
+      setHistory(prev => {
+        const updated = prev.filter(item => item.id !== id);
+        if (selectedItem?.id === id) {
+          setSelectedItem(null);
+        }
+        return updated;
+      });
+    } catch (err: any) {
+      alert(err.message || "Error deleting prompt history item.");
+    }
+  };
+
+  const handleDeleteBeforeToday = async () => {
+    if (!confirm("Are you sure you want to delete all prompts from before today's date?")) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/history/before-today`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete older prompts.");
+      const data = await res.json();
+      alert(`Successfully deleted ${data.deleted_count || 0} older prompts.`);
+      await fetchHistory();
+    } catch (err: any) {
+      alert(err.message || "Error deleting older prompts.");
     }
   };
 
@@ -69,13 +117,22 @@ export default function AnalyticsPage() {
           <h1 className="text-3xl font-extrabold text-white tracking-tight">System Request History</h1>
           <p className="text-zinc-400 text-sm mt-1">Detailed transaction lists and query metadata inspections</p>
         </div>
-        <button 
-          onClick={fetchHistory}
-          className="bg-zinc-800 hover:bg-zinc-700 text-white font-semibold text-xs px-4 py-2.5 rounded-lg flex items-center gap-2 border border-zinc-700 transition"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          <span>Refresh List</span>
-        </button>
+        <div className="flex gap-3">
+          <button 
+            onClick={handleDeleteBeforeToday}
+            className="bg-red-950/60 hover:bg-red-900/60 text-red-400 font-semibold text-xs px-4 py-2.5 rounded-lg flex items-center gap-2 border border-red-800/30 transition active:scale-95 shadow-sm"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Delete Old Prompts</span>
+          </button>
+          <button 
+            onClick={fetchHistory}
+            className="bg-zinc-800 hover:bg-zinc-700 text-white font-semibold text-xs px-4 py-2.5 rounded-lg flex items-center gap-2 border border-zinc-700 transition"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Refresh List</span>
+          </button>
+        </div>
       </div>
 
       {error ? (
@@ -159,9 +216,9 @@ export default function AnalyticsPage() {
                           <td className="p-4 text-emerald-400 font-medium">
                             ${item.estimated_cost.toFixed(4)}
                           </td>
-                          <td className="p-4 text-right">
+                           <td className="p-4 text-right flex gap-3 justify-end items-center">
                             <button 
-                              className="text-amber-500 hover:text-amber-400 font-bold flex items-center gap-1 ml-auto active:scale-95 transition"
+                              className="text-amber-500 hover:text-amber-400 font-bold flex items-center gap-1 active:scale-95 transition"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setSelectedItem(item);
@@ -169,6 +226,13 @@ export default function AnalyticsPage() {
                             >
                               <Eye className="w-3.5 h-3.5" />
                               Inspect
+                            </button>
+                            <button 
+                              className="text-zinc-500 hover:text-red-400 active:scale-95 transition"
+                              onClick={(e) => handleDeleteHistoryItem(item.id, e)}
+                              title="Delete Transaction"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </td>
                         </tr>

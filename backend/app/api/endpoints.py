@@ -6,12 +6,13 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import os
 from typing import List, Optional
+from datetime import timezone
 
 from app.database.session import get_db
 from app.database.models import (
     RequestModel, ResponseModel, BenchmarkModel, CacheEventModel, 
     RouterThresholdModel, RouterAdjustmentLogModel, ProviderFailoverLogModel,
-    SecurityEventModel
+    SecurityEventModel, UserSettingsModel
 )
 from app.database.schemas import (
     ChatRequest, ChatResponse, RouterExplanationRequest, RouterExplanationResponse,
@@ -41,6 +42,28 @@ prompt_guard = PromptGuard(enabled=True)
 rate_limiter = RateLimiter(requests_per_minute=30, window_sec=60)
 
 router = APIRouter(prefix="/api")
+
+# User Identity Extraction Helper
+def get_current_user_email(request: Request) -> Optional[str]:
+    if not request:
+        return None
+    email = request.headers.get("X-User-Email") or request.headers.get("x-user-email")
+    if email and email.strip():
+        return email.strip().lower()
+    auth = request.headers.get("Authorization") or request.headers.get("authorization")
+    if auth and "Bearer" in auth:
+        token = auth.split("Bearer")[-1].strip()
+        if "@" in token:
+            return token.strip().lower()
+    return None
+
+def get_current_user_id(request: Request) -> Optional[str]:
+    if not request:
+        return None
+    uid = request.headers.get("X-User-Id") or request.headers.get("x-user-id")
+    if uid and uid.strip():
+        return uid.strip()
+    return None
 
 # Instantiate Core Engines
 groq_local = GroqProvider()         # "Local" model — free Groq Llama 3.1 8B
@@ -139,6 +162,8 @@ def explain_route(req: RouterExplanationRequest):
 def chat_endpoint(req: ChatRequest, request: Request, db: Session = Depends(get_db)):
     start_time = time.time()
     client_ip = request.client.host if request and request.client else "127.0.0.1"
+    user_email = req.user_email or get_current_user_email(request)
+    user_id = req.user_id or get_current_user_id(request)
 
     # Rate Limiter check (30 req / min)
     allowed, count = rate_limiter.is_allowed(client_ip)
@@ -164,6 +189,8 @@ def chat_endpoint(req: ChatRequest, request: Request, db: Session = Depends(get_
             
             # Create a mock Request & Response log
             new_request = RequestModel(
+                user_id=user_id,
+                user_email=user_email.strip().lower() if user_email else None,
                 prompt=req.prompt,
                 routed_to="cache",
                 final_route=route_label,
@@ -264,8 +291,8 @@ def chat_endpoint(req: ChatRequest, request: Request, db: Session = Depends(get_
                     f"or hedging/hallucination flags were raised: {flagged_info['reasons']}"
                 )
                 
-                # Fast remote escalation without slow draft re-generation
-                ans, r_p, r_c, used_p = failover_manager.generate_with_failover(req.prompt, "groq", remote_model, db)
+                # Verify-Draft logic using local draft as context
+                ans, r_p, r_c, used_p = failover_manager.verify_draft_with_failover(req.prompt, s1, "groq", remote_model, db)
                 p_tok += r_p
                 c_tok += r_c
             else:
@@ -295,6 +322,8 @@ def chat_endpoint(req: ChatRequest, request: Request, db: Session = Depends(get_
 
     # Save to Database
     new_request = RequestModel(
+        user_id=user_id,
+        user_email=user_email.strip().lower() if user_email else None,
         prompt=req.prompt,
         routed_to=route_name,
         final_route=final_route,
@@ -336,14 +365,16 @@ def chat_endpoint(req: ChatRequest, request: Request, db: Session = Depends(get_
         draft_text=draft,
         intent=category,
         compute_backend=get_hardware_info()["compute_backend"],
-        timestamp=new_request.timestamp
+        timestamp=new_request.timestamp.replace(tzinfo=timezone.utc)
     )
 
 @router.post("/chat/stream")
-async def chat_stream_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
+async def chat_stream_endpoint(req: ChatRequest, request: Request, db: Session = Depends(get_db)):
     """
     Streams output using Server-Sent Events (SSE).
     """
+    user_email = req.user_email or get_current_user_email(request)
+    user_id = req.user_id or get_current_user_id(request)
     route_name, reason, estimates = routing_engine.route(req.prompt)
     local_model = req.local_model or settings.ACTIVE_LOCAL_MODEL
     remote_model = req.remote_model or settings.ACTIVE_REMOTE_MODEL
@@ -351,6 +382,69 @@ async def chat_stream_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
     threshold = req.threshold or settings.DEFAULT_CONSISTENCY_THRESHOLD
 
     async def stream_generator():
+        async def async_iterate_stream(stream):
+            loop = asyncio.get_running_loop()
+            stream_iter = iter(stream)
+            last_chunk_time = time.time()
+            
+            while True:
+                try:
+                    chunk_task = loop.run_in_executor(None, next, stream_iter)
+                    chunk = await asyncio.wait_for(chunk_task, timeout=10.0)
+                    last_chunk_time = time.time()
+                    yield chunk
+                except asyncio.TimeoutError:
+                    if time.time() - last_chunk_time > 30.0:
+                        yield {"error": "Stream timed out (30s) waiting for response from provider"}
+                        break
+                    else:
+                        yield {"event": "heartbeat"}
+                except StopIteration:
+                    break
+                except Exception as e:
+                    yield {"error": f"Stream error: {str(e)}"}
+                    break
+        # Check Cache
+        if settings.ENABLE_CACHE:
+            cached_entry, hit_type, sim_score = smart_cache.get(db, req.prompt)
+            if cached_entry:
+                route_label = f"CACHE HIT ({hit_type})"
+                route_desc = f"Resolved from cache database via {hit_type.lower()} matching (similarity: {sim_score:.2f})."
+                yield f"data: {json.dumps({'event': 'routing', 'route': 'cache', 'reason': route_desc})}\n\n"
+                await asyncio.sleep(0.01)
+                
+                # Stream cached content word by word
+                for word in cached_entry.response_text.split(" "):
+                    yield f"data: {json.dumps({'event': 'content', 'text': word + ' '})}\n\n"
+                    await asyncio.sleep(0.005)
+                
+                # Log transaction to DB
+                db_req = RequestModel(
+                    prompt=req.prompt,
+                    routed_to="cache",
+                    final_route=route_label,
+                    route_reason=route_desc,
+                    latency_ms=0.0,
+                    prompt_tokens=cached_entry.prompt_tokens,
+                    completion_tokens=cached_entry.completion_tokens,
+                    cost=0.0
+                )
+                db.add(db_req)
+                db.flush()
+                
+                db_resp = ResponseModel(
+                    request_id=db_req.id,
+                    response_text=cached_entry.response_text,
+                    confidence_score=round(sim_score, 2),
+                    is_cached=True
+                )
+                db.add(db_resp)
+                db.commit()
+                
+                # Final done event
+                yield f"data: {json.dumps({'event': 'done', 'id': db_req.id, 'latency_ms': 0.0, 'prompt_tokens': cached_entry.prompt_tokens, 'completion_tokens': cached_entry.completion_tokens, 'estimated_cost': 0.0, 'route': route_label, 'confidence_score': round(sim_score, 2), 'intent': 'general_qa', 'compute_backend': get_hardware_info()['compute_backend']})}\n\n"
+                return
+
         start_time = time.time()
         p_tok, c_tok = 0, 0
         final_route = route_name.upper()
@@ -396,7 +490,15 @@ async def chat_stream_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
                 prov = get_remote_provider(remote_model)
                 stream = prov.generate_stream(req.prompt, remote_model)
                 chunk = {}
-                for chunk in stream:
+                async for stream_chunk in async_iterate_stream(stream):
+                    if "event" in stream_chunk and stream_chunk["event"] == "heartbeat":
+                        yield f"data: {json.dumps({'event': 'heartbeat'})}\n\n"
+                        continue
+                    if "error" in stream_chunk:
+                        yield f"data: {json.dumps({'event': 'error', 'error': stream_chunk['error']})}\n\n"
+                        break
+                    
+                    chunk = stream_chunk
                     delta = chunk.get("text", "")
                     ans_accumulator.append(delta)
                     yield f"data: {json.dumps({'event': 'content', 'text': delta})}\n\n"
@@ -418,9 +520,17 @@ async def chat_stream_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
                     await asyncio.sleep(0.01)
 
                     prov = get_remote_provider(remote_model)
-                    stream = prov.generate_stream(req.prompt, remote_model)
+                    stream = prov.verify_draft_stream(req.prompt, s1, remote_model)
                     chunk = {}
-                    for chunk in stream:
+                    async for stream_chunk in async_iterate_stream(stream):
+                        if "event" in stream_chunk and stream_chunk["event"] == "heartbeat":
+                            yield f"data: {json.dumps({'event': 'heartbeat'})}\n\n"
+                            continue
+                        if "error" in stream_chunk:
+                            yield f"data: {json.dumps({'event': 'error', 'error': stream_chunk['error']})}\n\n"
+                            break
+                        
+                        chunk = stream_chunk
                         delta = chunk.get("text", "")
                         ans_accumulator.append(delta)
                         yield f"data: {json.dumps({'event': 'content', 'text': delta})}\n\n"
@@ -447,7 +557,15 @@ async def chat_stream_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
             
             # Iterate stream
             chunk = {}
-            for chunk in stream:
+            async for stream_chunk in async_iterate_stream(stream):
+                if "event" in stream_chunk and stream_chunk["event"] == "heartbeat":
+                    yield f"data: {json.dumps({'event': 'heartbeat'})}\n\n"
+                    continue
+                if "error" in stream_chunk:
+                    yield f"data: {json.dumps({'event': 'error', 'error': stream_chunk['error']})}\n\n"
+                    break
+                
+                chunk = stream_chunk
                 delta = chunk.get("text", "")
                 ans_accumulator.append(delta)
                 yield f"data: {json.dumps({'event': 'content', 'text': delta})}\n\n"
@@ -465,6 +583,8 @@ async def chat_stream_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
 
         # Database writing wrapped in async run
         db_req = RequestModel(
+            user_id=user_id,
+            user_email=user_email.strip().lower() if user_email else None,
             prompt=req.prompt,
             routed_to=route_name,
             final_route=final_route,
@@ -497,8 +617,9 @@ async def chat_stream_endpoint(req: ChatRequest, db: Session = Depends(get_db)):
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
 @router.get("/analytics", response_model=AnalyticsSummary)
-def get_analytics(db: Session = Depends(get_db)):
-    return analytics_engine.get_summary(db)
+def get_analytics(request: Request = None, user_email: Optional[str] = None, db: Session = Depends(get_db)):
+    resolved_email = user_email or get_current_user_email(request)
+    return analytics_engine.get_summary(db, user_email=resolved_email)
 
 @router.get("/analytics/cache-performance")
 def get_cache_performance(db: Session = Depends(get_db)):
@@ -613,8 +734,12 @@ def get_security_analytics(db: Session = Depends(get_db)):
     }
 
 @router.get("/history", response_model=List[ChatResponse])
-def get_history(limit: int = 20, db: Session = Depends(get_db)):
-    requests = db.query(RequestModel).order_by(RequestModel.timestamp.desc()).limit(limit).all()
+def get_history(request: Request = None, user_email: Optional[str] = None, limit: int = 30, db: Session = Depends(get_db)):
+    resolved_email = user_email or get_current_user_email(request)
+    query = db.query(RequestModel)
+    if resolved_email:
+        query = query.filter(RequestModel.user_email == resolved_email.strip().lower())
+    requests = query.order_by(RequestModel.timestamp.desc()).limit(limit).all()
     history = []
     for req in requests:
         resp = db.query(ResponseModel).filter(ResponseModel.request_id == req.id).first()
@@ -631,23 +756,55 @@ def get_history(limit: int = 20, db: Session = Depends(get_db)):
             confidence_score=resp.confidence_score if resp else 1.0,
             is_cached=resp.is_cached if resp else False,
             draft_text=resp.draft_text if resp else None,
-            timestamp=req.timestamp
+            user_email=req.user_email,
+            timestamp=req.timestamp.replace(tzinfo=timezone.utc)
         ))
     return history
 
+@router.delete("/history/{id}")
+def delete_history_item(id: int, request: Request = None, db: Session = Depends(get_db)):
+    resolved_email = get_current_user_email(request)
+    query = db.query(RequestModel).filter(RequestModel.id == id)
+    if resolved_email:
+        query = query.filter((RequestModel.user_email == resolved_email.strip().lower()) | (RequestModel.user_email == None))
+    record = query.first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Transaction not found or access denied.")
+    db.delete(record)
+    db.commit()
+    return {"status": "success", "message": "Transaction deleted"}
+
+@router.delete("/history/before-today")
+def delete_history_before_today(request: Request = None, db: Session = Depends(get_db)):
+    from datetime import datetime, time
+    today_start = datetime.combine(datetime.now().date(), time.min)
+    resolved_email = get_current_user_email(request)
+    query = db.query(RequestModel).filter(RequestModel.timestamp < today_start)
+    if resolved_email:
+        query = query.filter(RequestModel.user_email == resolved_email.strip().lower())
+    deleted_count = query.delete(synchronize_session=False)
+    db.commit()
+    return {"status": "success", "deleted_count": deleted_count}
+
 @router.post("/benchmark")
-def run_benchmark_endpoint(req: BenchmarkRunRequest, db: Session = Depends(get_db)):
+def run_benchmark_endpoint(req: BenchmarkRunRequest, request: Request = None, db: Session = Depends(get_db)):
+    resolved_email = req.user_email or get_current_user_email(request)
+    resolved_id = req.user_id or get_current_user_id(request)
     runner = BenchmarkRunner(db)
-    return runner.run_benchmark(req.benchmark_name, req.threshold)
+    return runner.run_benchmark(req.benchmark_name, req.threshold, req.tasks_file, user_email=resolved_email, user_id=resolved_id)
 
 @router.get("/benchmarks", response_model=List[BenchmarkSummary])
-def get_benchmarks(limit: int = 10, db: Session = Depends(get_db)):
-    b_records = db.query(BenchmarkModel).order_by(BenchmarkModel.timestamp.desc()).limit(limit).all()
+def get_benchmarks(request: Request = None, user_email: Optional[str] = None, limit: int = 15, db: Session = Depends(get_db)):
+    resolved_email = user_email or get_current_user_email(request)
+    query = db.query(BenchmarkModel)
+    if resolved_email:
+        query = query.filter((BenchmarkModel.user_email == resolved_email.strip().lower()) | (BenchmarkModel.user_email == None))
+    b_records = query.order_by(BenchmarkModel.timestamp.desc()).limit(limit).all()
     return [
         BenchmarkSummary(
             id=b.id,
             benchmark_name=b.benchmark_name,
-            timestamp=b.timestamp,
+            timestamp=b.timestamp.replace(tzinfo=timezone.utc),
             total_tasks=b.total_tasks,
             accuracy=b.accuracy,
             remote_tokens=b.remote_tokens,
@@ -655,9 +812,23 @@ def get_benchmarks(limit: int = 10, db: Session = Depends(get_db)):
             cost=b.cost,
             savings=b.savings,
             latency_avg=b.latency_avg,
-            config_json=b.config_json
+            config_json=b.config_json,
+            user_email=b.user_email
         ) for b in b_records
     ]
+
+@router.delete("/benchmarks/{id}")
+def delete_benchmark(id: int, request: Request = None, db: Session = Depends(get_db)):
+    resolved_email = get_current_user_email(request)
+    query = db.query(BenchmarkModel).filter(BenchmarkModel.id == id)
+    if resolved_email:
+        query = query.filter((BenchmarkModel.user_email == resolved_email.strip().lower()) | (BenchmarkModel.user_email == None))
+    record = query.first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Benchmark not found or access denied.")
+    db.delete(record)
+    db.commit()
+    return {"status": "success", "message": "Benchmark deleted"}
 
 @router.get("/models")
 def get_supported_models():
@@ -682,7 +853,6 @@ def get_supported_models():
 def mask_api_key(key: Optional[str]) -> Optional[str]:
     if not key or key.strip() == "" or "placeholder" in key.lower() or "your_" in key.lower():
         return ""
-    # Fully mask the key for maximum security — never leak key prefixes, suffixes, or raw keys to the web UI
     return "••••••••"
 
 def is_masked(key: Optional[str]) -> bool:
@@ -714,20 +884,45 @@ def update_env_file(updates: dict[str, str]):
                     continue
             new_lines.append(line)
             
-        # Append any keys that weren't already in the file
         for key, val in updates.items():
             if key not in updated_keys:
                 new_lines.append(f"{key}={val}\n")
                 
         with open(env_path, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
-    except Exception as e:
+    except Exception:
         pass
 
-from app.utils.hardware_detect import get_hardware_info
-
 @router.get("/settings", response_model=SettingsPayload)
-def get_settings():
+def get_settings(request: Request = None, user_email: Optional[str] = None, db: Session = Depends(get_db)):
+    resolved_email = user_email or get_current_user_email(request)
+    
+    # Check if user has individual settings in UserSettingsModel
+    if resolved_email:
+        user_sett = db.query(UserSettingsModel).filter(UserSettingsModel.user_email == resolved_email.strip().lower()).first()
+        if user_sett:
+            keys_dict = {}
+            if user_sett.api_keys_json:
+                try:
+                    keys_dict = json.loads(user_sett.api_keys_json)
+                except Exception:
+                    keys_dict = {}
+            return SettingsPayload(
+                active_local_model=user_sett.active_local_model or settings.ACTIVE_LOCAL_MODEL,
+                active_remote_model=user_sett.active_remote_model or settings.ACTIVE_REMOTE_MODEL,
+                default_threshold=user_sett.default_threshold if user_sett.default_threshold is not None else settings.DEFAULT_CONSISTENCY_THRESHOLD,
+                enable_cache=user_sett.enable_cache if user_sett.enable_cache is not None else settings.ENABLE_CACHE,
+                enable_prompt_compression=user_sett.enable_prompt_compression if user_sett.enable_prompt_compression is not None else settings.ENABLE_PROMPT_COMPRESSION,
+                compute_backend=get_hardware_info()["compute_backend"],
+                user_email=resolved_email,
+                fireworks_api_key=mask_api_key(keys_dict.get("fireworks_api_key") or settings.FIREWORKS_API_KEY),
+                openai_api_key=mask_api_key(keys_dict.get("openai_api_key") or settings.OPENAI_API_KEY),
+                anthropic_api_key=mask_api_key(keys_dict.get("anthropic_api_key") or settings.ANTHROPIC_API_KEY),
+                gemini_api_key=mask_api_key(keys_dict.get("gemini_api_key") or settings.GEMINI_API_KEY),
+                groq_api_key=mask_api_key(keys_dict.get("groq_api_key") or settings.GROQ_API_KEY),
+                together_api_key=mask_api_key(keys_dict.get("together_api_key") or settings.TOGETHER_API_KEY)
+            )
+
     return SettingsPayload(
         active_local_model=settings.ACTIVE_LOCAL_MODEL,
         active_remote_model=settings.ACTIVE_REMOTE_MODEL,
@@ -735,6 +930,7 @@ def get_settings():
         enable_cache=settings.ENABLE_CACHE,
         enable_prompt_compression=settings.ENABLE_PROMPT_COMPRESSION,
         compute_backend=get_hardware_info()["compute_backend"],
+        user_email=resolved_email,
         fireworks_api_key=mask_api_key(settings.FIREWORKS_API_KEY),
         openai_api_key=mask_api_key(settings.OPENAI_API_KEY),
         anthropic_api_key=mask_api_key(settings.ANTHROPIC_API_KEY),
@@ -744,54 +940,51 @@ def get_settings():
     )
 
 @router.post("/settings")
-def update_settings(payload: SettingsPayload):
-    # Dynamically update settings in memory
+def update_settings(payload: SettingsPayload, request: Request = None, db: Session = Depends(get_db)):
+    resolved_email = payload.user_email or get_current_user_email(request)
+
+    # If user-specific update, save to UserSettingsModel
+    if resolved_email:
+        user_sett = db.query(UserSettingsModel).filter(UserSettingsModel.user_email == resolved_email.strip().lower()).first()
+        if not user_sett:
+            user_sett = UserSettingsModel(user_email=resolved_email.strip().lower())
+            db.add(user_sett)
+
+        user_sett.active_local_model = payload.active_local_model
+        user_sett.active_remote_model = payload.active_remote_model
+        user_sett.default_threshold = payload.default_threshold
+        user_sett.enable_cache = payload.enable_cache
+        user_sett.enable_prompt_compression = payload.enable_prompt_compression
+
+        keys_dict = {}
+        if user_sett.api_keys_json:
+            try:
+                keys_dict = json.loads(user_sett.api_keys_json)
+            except Exception:
+                keys_dict = {}
+
+        if payload.fireworks_api_key and not is_masked(payload.fireworks_api_key):
+            keys_dict["fireworks_api_key"] = payload.fireworks_api_key
+        if payload.openai_api_key and not is_masked(payload.openai_api_key):
+            keys_dict["openai_api_key"] = payload.openai_api_key
+        if payload.anthropic_api_key and not is_masked(payload.anthropic_api_key):
+            keys_dict["anthropic_api_key"] = payload.anthropic_api_key
+        if payload.gemini_api_key and not is_masked(payload.gemini_api_key):
+            keys_dict["gemini_api_key"] = payload.gemini_api_key
+        if payload.groq_api_key and not is_masked(payload.groq_api_key):
+            keys_dict["groq_api_key"] = payload.groq_api_key
+        if payload.together_api_key and not is_masked(payload.together_api_key):
+            keys_dict["together_api_key"] = payload.together_api_key
+
+        user_sett.api_keys_json = json.dumps(keys_dict)
+        db.commit()
+
+    # Also update global active settings
     settings.ACTIVE_LOCAL_MODEL = payload.active_local_model
     settings.ACTIVE_REMOTE_MODEL = payload.active_remote_model
     settings.DEFAULT_CONSISTENCY_THRESHOLD = payload.default_threshold
     settings.ENABLE_CACHE = payload.enable_cache
     settings.ENABLE_PROMPT_COMPRESSION = payload.enable_prompt_compression
-    
-    env_updates = {
-        "ACTIVE_LOCAL_MODEL": payload.active_local_model,
-        "ACTIVE_REMOTE_MODEL": payload.active_remote_model,
-        "DEFAULT_CONSISTENCY_THRESHOLD": str(payload.default_threshold),
-        "ENABLE_CACHE": "true" if payload.enable_cache else "false",
-        "ENABLE_PROMPT_COMPRESSION": "true" if payload.enable_prompt_compression else "false",
-    }
 
-    # Only update API keys if they are provided, not empty/null, and NOT masked
-    if payload.fireworks_api_key is not None:
-        if not is_masked(payload.fireworks_api_key):
-            settings.FIREWORKS_API_KEY = payload.fireworks_api_key
-            env_updates["FIREWORKS_API_KEY"] = payload.fireworks_api_key
-            
-    if payload.openai_api_key is not None:
-        if not is_masked(payload.openai_api_key):
-            settings.OPENAI_API_KEY = payload.openai_api_key
-            env_updates["OPENAI_API_KEY"] = payload.openai_api_key
-            
-    if payload.anthropic_api_key is not None:
-        if not is_masked(payload.anthropic_api_key):
-            settings.ANTHROPIC_API_KEY = payload.anthropic_api_key
-            env_updates["ANTHROPIC_API_KEY"] = payload.anthropic_api_key
-            
-    if payload.gemini_api_key is not None:
-        if not is_masked(payload.gemini_api_key):
-            settings.GEMINI_API_KEY = payload.gemini_api_key
-            env_updates["GEMINI_API_KEY"] = payload.gemini_api_key
-            
-    if payload.groq_api_key is not None:
-        if not is_masked(payload.groq_api_key):
-            settings.GROQ_API_KEY = payload.groq_api_key
-            env_updates["GROQ_API_KEY"] = payload.groq_api_key
-            
-    if payload.together_api_key is not None:
-        if not is_masked(payload.together_api_key):
-            settings.TOGETHER_API_KEY = payload.together_api_key
-            env_updates["TOGETHER_API_KEY"] = payload.together_api_key
+    return {"status": "success", "message": "Settings updated and isolated for your workspace."}
 
-    # Save to .env file
-    update_env_file(env_updates)
-
-    return {"status": "success", "message": "Settings updated in memory and .env file."}

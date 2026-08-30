@@ -28,9 +28,11 @@ class RemoteFireworksProvider(BaseProvider):
             "messages": [{"role": "user", "content": prompt}],
             "temperature": options.get("temperature", 0.7) if options else 0.7
         }
+        if options and "seed" in options:
+            payload["seed"] = options["seed"]
 
         try:
-            response = requests.post(self.base_url, headers=headers, json=payload, timeout=30)
+            response = requests.post(self.base_url, headers=headers, json=payload, timeout=45)
             response.raise_for_status()
             data = response.json()
             
@@ -61,9 +63,11 @@ class RemoteFireworksProvider(BaseProvider):
             "temperature": options.get("temperature", 0.7) if options else 0.7,
             "stream": True
         }
+        if options and "seed" in options:
+            payload["seed"] = options["seed"]
 
         try:
-            response = requests.post(self.base_url, headers=headers, json=payload, stream=True, timeout=30)
+            response = requests.post(self.base_url, headers=headers, json=payload, stream=True, timeout=45)
             response.raise_for_status()
             
             prompt_tokens = 0

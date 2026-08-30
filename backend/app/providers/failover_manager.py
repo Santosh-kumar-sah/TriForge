@@ -161,3 +161,26 @@ class ProviderHealthManager:
 
         # If all providers fail, return clean graceful fallback error
         return f"Error: All provider failover attempts failed. Last error: {sanitize_error_msg(last_error)}", 0, 0, preferred_provider_name
+
+    def verify_draft_with_failover(
+        self, 
+        prompt: str, 
+        draft: str,
+        preferred_provider_name: str, 
+        model: str, 
+        db: Session = None,
+        max_attempts: int = 3
+    ) -> Tuple[str, int, int, str]:
+        """
+        Executes remote model verification of local draft response with failover.
+        """
+        verification_prompt = (
+            f"You are an expert verifier. Review the draft answer for the given task.\n"
+            f"If the draft is correct and complete, repeat the draft answer exactly, with no additional commentary, preamble, or meta-confirmation.\n"
+            f"If the draft is incorrect, incomplete, or has errors, output the corrected/completed answer only.\n"
+            f"Do not include any conversational filler, meta-talk (like 'Confirmed', 'Here is the correction'), or explanations.\n\n"
+            f"Task: {prompt}\n"
+            f"Draft Answer: {draft}\n\n"
+            f"Final Answer:"
+        )
+        return self.generate_with_failover(verification_prompt, preferred_provider_name, model, db, max_attempts)

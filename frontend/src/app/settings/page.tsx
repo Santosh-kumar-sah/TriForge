@@ -30,7 +30,10 @@ interface SettingsData {
   together_api_key?: string;
 }
 
+import { useAuth } from "@/context/AuthContext";
+
 export default function SettingsPage() {
+  const { user, authHeaders } = useAuth();
   const [formData, setFormData] = useState<SettingsData>({
     active_local_model: "qwen2.5:3b-instruct",
     active_remote_model: "accounts/fireworks/models/llama-v3p1-8b-instruct",
@@ -58,8 +61,9 @@ export default function SettingsPage() {
     setLoading(true);
     setErrorMsg(null);
     try {
+      const emailQuery = user?.email ? `?user_email=${encodeURIComponent(user.email)}` : "";
       const [settingsRes, modelsRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/api/settings`),
+        fetch(`${API_BASE_URL}/api/settings${emailQuery}`, { headers: authHeaders }),
         fetch(`${API_BASE_URL}/api/models`)
       ]);
       if (!settingsRes.ok) throw new Error("Failed to fetch settings from API.");
@@ -79,7 +83,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     fetchSettingsAndModels();
-  }, []);
+  }, [user?.email]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -89,11 +93,17 @@ export default function SettingsPage() {
     try {
       const res = await fetch(`${API_BASE_URL}/api/settings`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData)
+        headers: { 
+          "Content-Type": "application/json",
+          ...authHeaders
+        },
+        body: JSON.stringify({
+          ...formData,
+          user_email: user?.email
+        })
       });
       if (!res.ok) throw new Error("Failed to save settings changes.");
-      setSuccessMsg("System configuration updated successfully.");
+      setSuccessMsg("System configuration updated and isolated to your workspace.");
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
       setErrorMsg(err.message || "Error saving configuration changes.");

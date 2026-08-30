@@ -5,15 +5,15 @@ import time
 import logging
 
 from app.config import settings
-from app.database.session import engine, Base
+from app.database.session import engine, Base, init_db_migrations
 from app.api.endpoints import router as api_router
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("TriForge")
 
-# Create database tables (SQLite tables initialized automatically if they don't exist)
-Base.metadata.create_all(bind=engine)
+# Create database tables and apply column migrations
+init_db_migrations()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,

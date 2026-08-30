@@ -7,6 +7,8 @@ class ChatRequest(BaseModel):
     local_model: Optional[str] = Field(None, description="Force a specific local model")
     remote_model: Optional[str] = Field(None, description="Force a specific remote model")
     threshold: Optional[float] = Field(None, description="Override self-consistency threshold")
+    user_id: Optional[str] = Field(None, description="Authenticated user ID")
+    user_email: Optional[str] = Field(None, description="Authenticated user email")
 
 class ChatResponse(BaseModel):
     id: int
@@ -23,6 +25,7 @@ class ChatResponse(BaseModel):
     draft_text: Optional[str] = None
     intent: Optional[str] = "general_qa"
     compute_backend: Optional[str] = "CPU"
+    user_email: Optional[str] = None
     timestamp: datetime
 
 class RouterExplanationRequest(BaseModel):
@@ -54,12 +57,15 @@ class AnalyticsSummary(BaseModel):
     co2_saved_kg: float = 0.0
     phone_charges_saved: int = 0
     compute_backend: Optional[str] = "CPU"
+    user_email: Optional[str] = None
     daily_stats: Optional[List[Dict[str, Any]]] = None
 
 class BenchmarkRunRequest(BaseModel):
     benchmark_name: str = "Standard Sweep"
     tasks_file: Optional[str] = None
     threshold: float = 0.8
+    user_id: Optional[str] = None
+    user_email: Optional[str] = None
 
 class BenchmarkSummary(BaseModel):
     id: int
@@ -73,6 +79,7 @@ class BenchmarkSummary(BaseModel):
     savings: float
     latency_avg: float
     config_json: Optional[str] = None
+    user_email: Optional[str] = None
 
 class SettingsPayload(BaseModel):
     active_local_model: str
@@ -81,6 +88,7 @@ class SettingsPayload(BaseModel):
     enable_cache: bool
     enable_prompt_compression: bool
     compute_backend: Optional[str] = None
+    user_email: Optional[str] = None
     fireworks_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None

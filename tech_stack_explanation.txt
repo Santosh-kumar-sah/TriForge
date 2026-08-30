@@ -1,0 +1,94 @@
+================================================================================
+                    TRIFORGE: COMPLETE TECH STACK GUIDE
+================================================================================
+
+Ye guide aapko judges ko ye batane me help karegi ki hamare project me kaun si 
+technology kyun aur kis kaam ke liye use ki gayi hai.
+
+--------------------------------------------------------------------------------
+1. FRONTEND TECHNOLOGIES (Client Side UI)
+--------------------------------------------------------------------------------
+
+* Next.js 16 (React Framework)
+  - Kyun use kiya: Modern React framework hai jo Component-based architecture aur 
+    automatic server-side optimizations (Fast Page Load) provide karta hai.
+  - Kisliye use kiya: Pure application ke layouts, Chat interface, Analytics 
+    Dashboard aur Settings pages ko build karne ke liye.
+
+* TypeScript
+  - Kyun use kiya: JavaScript me Type safety (types check karna) provide karta hai 
+    taaki build time par hi error pakde ja sakein aur code crash na ho.
+  - Kisliye use kiya: Frontend me API responses aur states ke static types ko 
+    define karne ke liye.
+
+* Tailwind CSS (v4)
+  - Kyun use kiya: Utility-first CSS framework hai jo inline class writing se fast 
+    development and modern responsive design settings provide karta hai.
+  - Kisliye use kiya: TriForge ka theme design (zinc-borders, dark theme, smooth 
+    gradients) build karne ke liye.
+
+* Recharts
+  - Kyun use kiya: Ek reliable SVG graph visualization library hai jo React states 
+    se direct connect hokar responsive graphs banati hai.
+  - Kisliye use kiya: Latency, Cost, aur Accuracy ke comparative graph bars aur 
+    pie-charts render karne ke liye.
+
+* Framer Motion
+  - Kyun use kiya: Custom animations (fade-in, scale effects) implement karne 
+    ka sabse popular aur smooth tool hai.
+  - Kisliye use kiya: Button scale effects aur Cards ke dynamic tilt movements 
+    ko handle karne ke liye.
+
+* Lucide React
+  - Kyun use kiya: Modern, clean, aur light vector icons provide karta hai.
+  - Kisliye use kiya: Sidebar navigation aur stats panels ke visual representation 
+    ke liye.
+
+--------------------------------------------------------------------------------
+2. BACKEND TECHNOLOGIES (API & Routing Logic)
+--------------------------------------------------------------------------------
+
+* FastAPI (Python Framework)
+  - Kyun use kiya: Python ka sabse fast asynchronous framework hai. Isme automatic 
+    Swagger API documentation aur asynchronous requests processing support milta hai.
+  - Kisliye use kiya: Web server, SSE chat streams, settings routes aur benchmark 
+    execution handle karne ke liye.
+
+* SQLite
+  - Kyun use kiya: Ek serverless, lightweight database hai jiske liye kisi bade database 
+    installation (jaise Postgres) ki jarurat nahi hoti. Ye single file (`triforge.db`) 
+    me sara data save rakhta hai.
+  - Kisliye use kiya: Chat history logs, benchmark sweeps data aur security logs 
+    ko permanent store karne ke liye.
+
+* SQLAlchemy (ORM)
+  - Kyun use kiya: Python database objects (models) aur tables ke beech connectivity 
+    set karta hai taaki developers ko raw SQL queries likhne ki jarurat na pade.
+  - Kisliye use kiya: Data tables map karne aur records retrieval ke liye.
+
+* Pydantic
+  - Kyun use kiya: JSON data parsing aur validation ka standard Python parser tool hai.
+  - Kisliye use kiya: Clients inputs validate karne aur backend payloads standard check 
+    ke liye.
+
+--------------------------------------------------------------------------------
+3. AI & MODEL LAYER (Decision Engine)
+--------------------------------------------------------------------------------
+
+* SentenceTransformers / Custom Embedding Space
+  - Kyun use kiya: Vector representation generate karta hai taaki hum prompt ka 
+    meaning samajh sakein.
+  - Kisliye use kiya: Semantic cache lookup ke liye (Cosine Similarity index 0.92 
+    se query match karke cache hits check karne ke liye).
+
+* Ollama (Local Compute Model)
+  - Kyun use kiya: Local system par high-performance models (Llama 8B, Qwen) bina 
+    kisi subscription cost aur privacy leaks ke chalane me help karta hai.
+  - Kisliye use kiya: Local execution and low-complexity user queries solve karne ke liye.
+
+* Groq & Fireworks APIs (Cloud Endpoint Models)
+  - Kyun use kiya: Groq free rate limits aur fast execution deta hai, aur Fireworks 
+    AI cloud endpoints dynamic cost model use karte hain jo regular cloud model se 
+    kafi kam spend lete hain.
+  - Kisliye use kiya: Premium remote model calls and verify-draft loops complete 
+    karne ke liye.
