@@ -19,3 +19,12 @@ env/
 *.db
 *.db-wal
 *.db-shm
+
+# Logs and traces
+*.log
+sweep_run_*_trace.json
+
+# Node dependencies and build
+frontend/node_modules/
+frontend/.next/
+frontend/out/

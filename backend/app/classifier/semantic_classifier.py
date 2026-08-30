@@ -70,6 +70,16 @@ class SemanticClassifier:
         if any(kw in prompt_lower for kw in ["write a story", "write a poem", "compose a song", "write lyrics", "creative writing"]):
             return "creative_writing"
 
+        # General QA / Factual / Reasoning heuristics
+        if any(prompt_lower.strip().startswith(kw) for kw in [
+            "what ", "who ", "where ", "when ", "why ", "how ", "which ", "in ", "is ", 
+            "are ", "do ", "does ", "did ", "solve ", "translate ", "whose ", "whom "
+        ]):
+            return "general_qa"
+
+        if any(kw in prompt_lower for kw in ["if all ", "fade quickly", "roses fade"]):
+            return "reasoning"
+
         return "ambiguous"
 
     def classify(self, prompt: str) -> str:

@@ -1,0 +1,77 @@
+================================================================================
+            TRIFORGE: TEAM PRESENTATION & ROLE DIVISION GUIDE
+================================================================================
+
+Ye guide aapke teeno team members ke beech roles ko divide karne aur judges ke
+sawaalon ka jawaab dene ke liye taiyar ki gayi hai. Isko Notepad me open
+karke har ek member apne technical domain par confidence ke sath bol sakta hai.
+
+--------------------------------------------------------------------------------
+MEMBER 1: FRONTEND DEVELOPER (Next.js, UI, and SSE Client)
+--------------------------------------------------------------------------------
+* Tech Stack: Next.js (App Router), TypeScript, Tailwind CSS, Recharts, Lucide Icons.
+
+* Kya explain karna hai judges ko:
+  1. Responsive Dark UI:
+     - "Maine TriForge ka pura client dashboard aur interactive interface Next.js 
+       aur Tailwind CSS use karke develop kiya hai. Pura UI fully responsive hai."
+  2. SSE (Server-Sent Events) Streaming Client:
+     - "Chat UI me real-time response streaming ke liye humne custom Server-Sent Events 
+       (SSE) parser code kiya hai. Jaise hi backend tokens stream karta hai, frontend 
+       use event-by-event accumulate karke user console par display karta hai."
+  3. Dynamic Graphs and visual data (Recharts):
+     - "Analytics aur Benchmarks page ke dynamic charts Recharts library se built hain. 
+       Ye backend API se live metrics (accuracy, cost, latency trends) lekar bars 
+       aur pie-charts me render karte hain."
+  4. Export Report Button:
+     - "Maine markdown file exporter design kiya hai jo current benchmark sweep data ko 
+       clean text and tabular format me format karke client-side par export aur 
+       download karta hai."
+
+--------------------------------------------------------------------------------
+MEMBER 2: BACKEND & DATABASE DEVELOPER (FastAPI, Security, and Calculations)
+--------------------------------------------------------------------------------
+* Tech Stack: FastAPI, Uvicorn, SQLite, SQLAlchemy (ORM), Pydantic validation.
+
+* Kya explain karna hai judges ko:
+  1. FastAPI Gateway & REST Routing:
+     - "Maine python ka high-performance, asynchronous framework FastAPI use karke 
+       TriForge ke APIs aur database integration check build kiya hai."
+  2. SQLite Schema & ORM Model:
+     - "Maine SQL database setup kiya hai aur SQLAlchemy ke models (Requests, Responses, 
+       Benchmarks, Cache logs, Security events) define kiye hain. SQLite lightweight 
+       aur serverless hone ki wajah se local system ke liye perfect fits hai."
+  3. Middleware Security (Rate Limiting & PromptGuard):
+     - "Gateway ko secure karne ke liye sliding-window Rate-Limiter design kiya hai jo 
+       spam requests (IP limits) block karta hai. Aur basic prompt guard heuristic filter 
+       likha hai jo prompt injection attacks (jailbreaks) detect karke bad requests 
+       reject karta hai."
+  4. Database Cleaner (New Delete Options):
+     - "Maine database housekeeping logic add kiya hai. Delete endpoints write kiye hain 
+       jiske through single logs, all logs before today, aur specific benchmark runs ko 
+       database se permanently delete kiya ja sakta hai."
+
+--------------------------------------------------------------------------------
+MEMBER 3: AI & LLM MODEL SPECIALIST (Routing, Semantic Cache, and Tuners)
+--------------------------------------------------------------------------------
+* Tech Stack: Cosine Similarity Vector space, SentenceTransformers, Local Ollama, Groq, 
+              OpenAI/Claude API, Verify-Draft Loop.
+
+* Kya explain karna hai judges ko:
+  1. Hybrid Intent Router:
+     - "Maine TriForge ka routing brain design kiya hai. Query aate hi Classifier model 
+       intent detect karta hai. Agar query conversation ya simple informational (<= 15 words) 
+       hai, to router use cheap local model par route karta hai, aur complex code/logic ko 
+       cloud model par route karta hai."
+  2. 2-Stage Semantic Cache:
+     - "Cost aur speed optimise karne ke liye Stage 1 me SHA-256 hash matching check hoti hai. 
+       Miss hone par Stage 2 me query ka 128-dimensional frequency vector calculate karte 
+       hain aur cached embeddings se cosine similarity check karte hain (threshold 0.92)."
+  3. Verify-Draft Loop & Hallucination:
+     - "Local model ke responses ko evaluation engine verify karta hai. Agar similarity index 
+       low hai ya output me hallucination detection flags match hote hain, to query remote 
+       model par escalate ho jati hai. Escalation ke dauran local draft response context ki 
+       tarah jata hai jisse remote completion tokens 80% tak reduce ho jate hain."
+  4. Adaptive Threshold Tuning:
+     - "Maine feedback loop scheduler code kiya hai jo systems latency trends aur feedback 
+       score ke basis par confidence threshold ko dynamically optimize aur shift karta hai."

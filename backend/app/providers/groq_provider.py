@@ -1,4 +1,5 @@
 import json
+import time
 import requests
 from typing import Tuple, Dict, Any, Generator
 from app.providers.base import BaseProvider, sanitize_error_msg
@@ -58,32 +59,45 @@ class GroqProvider(BaseProvider):
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": options.get("temperature", 0.7) if options else 0.7,
             }
+            if options and "seed" in options:
+                payload["seed"] = options["seed"]
 
-            try:
-                response = requests.post(
-                    self.base_url, headers=headers, json=payload, timeout=30
-                )
-                if response.status_code in [404, 429, 400] and target_model != fallback_models[-1]:
-                    continue
+            # Retry once on 429 with backoff before moving to next fallback model
+            for attempt in range(2):
+                try:
+                    response = requests.post(
+                        self.base_url, headers=headers, json=payload, timeout=45
+                    )
+                    if response.status_code == 429:
+                        if attempt == 0:
+                            time.sleep(2.0)  # Backoff before retry
+                            continue
+                        elif target_model != fallback_models[-1]:
+                            break  # Move to next fallback model
+                    if response.status_code in [404, 400] and target_model != fallback_models[-1]:
+                        break  # Move to next fallback model
 
-                response.raise_for_status()
-                data = response.json()
+                    response.raise_for_status()
+                    data = response.json()
 
-                content = (
-                    data.get("choices", [{}])[0]
-                    .get("message", {})
-                    .get("content", "")
-                )
-                usage = data.get("usage", {})
-                prompt_tokens = usage.get("prompt_tokens", 0)
-                completion_tokens = usage.get("completion_tokens", 0)
-                return content, prompt_tokens, completion_tokens
+                    content = (
+                        data.get("choices", [{}])[0]
+                        .get("message", {})
+                        .get("content", "")
+                    )
+                    usage = data.get("usage", {})
+                    prompt_tokens = usage.get("prompt_tokens", 0)
+                    completion_tokens = usage.get("completion_tokens", 0)
+                    return content, prompt_tokens, completion_tokens
 
-            except Exception as e:
-                last_exception = e
-                if target_model != fallback_models[-1]:
-                    continue
-                break
+                except Exception as e:
+                    last_exception = e
+                    if attempt == 0 and "429" in str(e):
+                        time.sleep(2.0)
+                        continue
+                    if target_model != fallback_models[-1]:
+                        break
+                    return f"Error querying Groq model ({model}): {sanitize_error_msg(last_exception)}", 0, 0
 
         return f"Error querying Groq model ({model}): {sanitize_error_msg(last_exception)}", 0, 0
 
@@ -112,12 +126,17 @@ class GroqProvider(BaseProvider):
                 "temperature": options.get("temperature", 0.7) if options else 0.7,
                 "stream": True,
             }
+            if options and "seed" in options:
+                payload["seed"] = options["seed"]
 
             try:
                 res = requests.post(
-                    self.base_url, headers=headers, json=payload, stream=True, timeout=30
+                    self.base_url, headers=headers, json=payload, stream=True, timeout=45
                 )
-                if res.status_code in [404, 429, 400] and target_model != fallback_models[-1]:
+                if res.status_code == 429 and target_model != fallback_models[-1]:
+                    time.sleep(2.0)  # Backoff before trying next fallback
+                    continue
+                if res.status_code in [404, 400] and target_model != fallback_models[-1]:
                     continue
                 res.raise_for_status()
                 response = res

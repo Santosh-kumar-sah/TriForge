@@ -9,13 +9,13 @@ class AnalyticsEngine:
         # Estimated cost configuration per token
         self.remote_cost_per_token = 0.20 / 1_000_000  # $0.20 per 1M tokens
 
-    def get_summary(self, db: Session) -> dict:
+    def get_summary(self, db: Session, user_email: str = None) -> dict:
         hw_info = get_hardware_info()
         compute_backend = hw_info["compute_backend"]
         kwh_rate = hw_info["kwh_per_1k_tokens"]
 
-        # Single aggregated query for overall metrics
-        agg = db.query(
+        # Base query filter
+        base_query = db.query(
             func.count(RequestModel.id).label("total"),
             func.sum(case((RequestModel.routed_to == "local", 1), else_=0)).label("local_reqs"),
             func.sum(case((RequestModel.routed_to == "remote", 1), else_=0)).label("remote_reqs"),
@@ -23,7 +23,12 @@ class AnalyticsEngine:
             func.sum(case((RequestModel.final_route.like("%REMOTE%"), RequestModel.prompt_tokens + RequestModel.completion_tokens), else_=0)).label("r_spent"),
             func.sum(case((RequestModel.final_route == "LOCAL", RequestModel.prompt_tokens + RequestModel.completion_tokens), else_=0)).label("l_spent"),
             func.sum(RequestModel.latency_ms).label("total_latency")
-        ).first()
+        )
+
+        if user_email:
+            base_query = base_query.filter(RequestModel.user_email == user_email.strip().lower())
+
+        agg = base_query.first()
 
         total = (agg.total or 0) if agg else 0
         if total == 0:
@@ -43,6 +48,7 @@ class AnalyticsEngine:
                 "co2_saved_kg": 0.0,
                 "phone_charges_saved": 0,
                 "compute_backend": compute_backend,
+                "user_email": user_email,
                 "daily_stats": []
             }
 
@@ -53,15 +59,20 @@ class AnalyticsEngine:
         l_spent = int(agg.l_spent or 0)
 
         # Cached requests count and saved tokens
-        cached_stats = db.query(
+        cached_query = db.query(
             func.count(ResponseModel.id).label("count"),
             func.sum(RequestModel.prompt_tokens + RequestModel.completion_tokens).label("saved_tokens")
         ).join(RequestModel, ResponseModel.request_id == RequestModel.id)\
-         .filter(ResponseModel.is_cached == True).first()
+         .filter(ResponseModel.is_cached == True)
+
+        if user_email:
+            cached_query = cached_query.filter(RequestModel.user_email == user_email.strip().lower())
+
+        cached_stats = cached_query.first()
 
         cached_count = (cached_stats.count or 0) if cached_stats else 0
         cache_saved_tokens = (cached_stats.saved_tokens or 0) if cached_stats else 0
-        cache_hit_rate = (cached_count / total) * 100
+        cache_hit_rate = (cached_count / total) * 100 if total > 0 else 0.0
 
         tokens_saved = l_spent + cache_saved_tokens
 
@@ -73,13 +84,13 @@ class AnalyticsEngine:
         co2_saved_kg = energy_saved_kwh * 0.385
         phone_charges_saved = int(energy_saved_kwh * 80)
 
-        avg_latency = (agg.total_latency or 0.0) / total if agg else 0.0
+        avg_latency = (agg.total_latency or 0.0) / total if (agg and total > 0) else 0.0
 
         # Last 7 days daily statistics via single aggregated query
         seven_days_ago = datetime.utcnow() - timedelta(days=7)
         
         try:
-            daily_records = db.query(
+            daily_query = db.query(
                 func.date(RequestModel.timestamp).label("day"),
                 func.count(RequestModel.id).label("count"),
                 func.sum(RequestModel.latency_ms).label("latency_sum"),
@@ -89,8 +100,12 @@ class AnalyticsEngine:
                 func.sum(
                     case((RequestModel.final_route == "LOCAL", RequestModel.prompt_tokens + RequestModel.completion_tokens), else_=0)
                 ).label("local_tokens")
-            ).filter(RequestModel.timestamp >= seven_days_ago)\
-             .group_by(func.date(RequestModel.timestamp))\
+            ).filter(RequestModel.timestamp >= seven_days_ago)
+
+            if user_email:
+                daily_query = daily_query.filter(RequestModel.user_email == user_email.strip().lower())
+
+            daily_records = daily_query.group_by(func.date(RequestModel.timestamp))\
              .order_by(func.date(RequestModel.timestamp))\
              .all()
         except Exception:
@@ -130,5 +145,6 @@ class AnalyticsEngine:
             "co2_saved_kg": round(co2_saved_kg, 4),
             "phone_charges_saved": phone_charges_saved,
             "compute_backend": compute_backend,
+            "user_email": user_email,
             "daily_stats": daily_stats
         }

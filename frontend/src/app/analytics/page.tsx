@@ -30,7 +30,10 @@ interface RequestHistoryItem {
   timestamp: string;
 }
 
+import { useAuth } from "@/context/AuthContext";
+
 export default function AnalyticsPage() {
+  const { user, authHeaders } = useAuth();
   const [history, setHistory] = useState<RequestHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingOld, setDeletingOld] = useState(false);
@@ -43,7 +46,10 @@ export default function AnalyticsPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/history?limit=30`);
+      const emailQuery = user?.email ? `&user_email=${encodeURIComponent(user.email)}` : "";
+      const res = await fetch(`${API_BASE_URL}/api/history?limit=30${emailQuery}`, {
+        headers: authHeaders
+      });
       if (!res.ok) throw new Error("Failed to fetch request history.");
       const json = await res.json();
       setHistory(json);
@@ -92,6 +98,47 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     fetchHistory();
+  }, [user?.email]);
+
+  const handleDeleteHistoryItem = async (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("Are you sure you want to delete this prompt from history?")) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/history/${id}`, {
+        method: "DELETE",
+        headers: authHeaders
+      });
+      if (!res.ok) throw new Error("Failed to delete history item.");
+      
+      setHistory(prev => {
+        const updated = prev.filter(item => item.id !== id);
+        if (selectedItem?.id === id) {
+          setSelectedItem(null);
+        }
+        return updated;
+      });
+    } catch (err: any) {
+      alert(err.message || "Error deleting prompt history item.");
+    }
+  };
+
+  const handleDeleteBeforeToday = async () => {
+    if (!confirm("Are you sure you want to delete all prompts from before today's date?")) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/history/before-today`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete older prompts.");
+      const data = await res.json();
+      alert(`Successfully deleted ${data.deleted_count || 0} older prompts.`);
+      await fetchHistory();
+    } catch (err: any) {
+      alert(err.message || "Error deleting older prompts.");
+    }
+  };
+
+  useEffect(() => {
+    fetchHistory();
   }, []);
 
   const filteredHistory = history.filter(item => 
@@ -107,21 +154,19 @@ export default function AnalyticsPage() {
           <h1 className="text-3xl font-extrabold text-white tracking-tight">System Request History</h1>
           <p className="text-zinc-400 text-sm mt-1">Detailed transaction lists and query metadata inspections</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex gap-3">
           <button 
-            onClick={handleDeleteOldPrompts}
-            disabled={deletingOld || loading}
-            className="bg-red-950/40 hover:bg-red-900/60 text-red-400 hover:text-red-300 font-semibold text-xs px-4 py-2.5 rounded-lg flex items-center gap-2 border border-red-800/60 transition active:scale-95 disabled:opacity-50 shadow-sm"
+            onClick={handleDeleteBeforeToday}
+            className="bg-red-950/60 hover:bg-red-900/60 text-red-400 font-semibold text-xs px-4 py-2.5 rounded-lg flex items-center gap-2 border border-red-800/30 transition active:scale-95 shadow-sm"
           >
-            <Trash2 className={`w-3.5 h-3.5 ${deletingOld ? "animate-pulse" : ""}`} />
-            <span>{deletingOld ? "Deleting Old..." : "Delete Old Prompts"}</span>
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Delete Old Prompts</span>
           </button>
           <button 
             onClick={fetchHistory}
-            disabled={loading || deletingOld}
-            className="bg-zinc-800 hover:bg-zinc-700 text-white font-semibold text-xs px-4 py-2.5 rounded-lg flex items-center gap-2 border border-zinc-700 transition active:scale-95"
+            className="bg-zinc-800 hover:bg-zinc-700 text-white font-semibold text-xs px-4 py-2.5 rounded-lg flex items-center gap-2 border border-zinc-700 transition"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCw className="w-3.5 h-3.5" />
             <span>Refresh List</span>
           </button>
         </div>
@@ -208,26 +253,24 @@ export default function AnalyticsPage() {
                           <td className="p-4 text-emerald-400 font-medium">
                             ${item.estimated_cost.toFixed(4)}
                           </td>
-                          <td className="p-4 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              <button 
-                                className="text-amber-500 hover:text-amber-400 font-bold flex items-center gap-1 active:scale-95 transition"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSelectedItem(item);
-                                }}
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                <span>Inspect</span>
-                              </button>
-                              <button
-                                title="Delete this prompt"
-                                className="text-zinc-500 hover:text-red-400 p-1 rounded hover:bg-red-950/30 transition active:scale-95"
-                                onClick={(e) => handleDeleteItem(item.id, e)}
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
+                           <td className="p-4 text-right flex gap-3 justify-end items-center">
+                            <button 
+                              className="text-amber-500 hover:text-amber-400 font-bold flex items-center gap-1 active:scale-95 transition"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedItem(item);
+                              }}
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              Inspect
+                            </button>
+                            <button 
+                              className="text-zinc-500 hover:text-red-400 active:scale-95 transition"
+                              onClick={(e) => handleDeleteHistoryItem(item.id, e)}
+                              title="Delete Transaction"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </td>
                         </tr>
                       ))

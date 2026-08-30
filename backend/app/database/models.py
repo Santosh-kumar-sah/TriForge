@@ -7,8 +7,10 @@ class RequestModel(Base):
     __tablename__ = "requests"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(100), nullable=True, index=True)
+    user_email = Column(String(150), nullable=True, index=True)
     prompt = Column(Text, nullable=False)
-    routed_to = Column(String(50), nullable=False)  # local, remote
+    routed_to = Column(String(50), nullable=False)  # local, remote, cache
     final_route = Column(String(100), nullable=False)  # LOCAL, REMOTE, LOCAL -> ESCALATED TO REMOTE
     route_reason = Column(Text, nullable=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), index=True)
@@ -50,6 +52,8 @@ class BenchmarkModel(Base):
     __tablename__ = "benchmarks"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(100), nullable=True, index=True)
+    user_email = Column(String(150), nullable=True, index=True)
     benchmark_name = Column(String(100), nullable=False)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
     total_tasks = Column(Integer, default=0)
@@ -60,6 +64,19 @@ class BenchmarkModel(Base):
     savings = Column(Float, default=0.0)
     latency_avg = Column(Float, default=0.0)
     config_json = Column(Text, nullable=True)  # Store sweep configurations or settings as JSON
+
+class UserSettingsModel(Base):
+    __tablename__ = "user_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String(150), unique=True, index=True, nullable=False)
+    active_local_model = Column(String(100), nullable=True)
+    active_remote_model = Column(String(100), nullable=True)
+    default_threshold = Column(Float, default=0.80)
+    enable_cache = Column(Boolean, default=True)
+    enable_prompt_compression = Column(Boolean, default=False)
+    api_keys_json = Column(Text, nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 class CacheEventModel(Base):
     __tablename__ = "cache_events"
