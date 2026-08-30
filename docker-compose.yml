@@ -15,7 +15,7 @@ services:
 
     
     environment:
-      - DATABASE_URL=sqlite:///./triforge.db
+      - DATABASE_URL=sqlite:///./data/triforge.db
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
 
     extra_hosts:

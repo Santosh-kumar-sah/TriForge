@@ -36,6 +36,7 @@ export default function AnalyticsPage() {
   const { user, authHeaders } = useAuth();
   const [history, setHistory] = useState<RequestHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deletingOld, setDeletingOld] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   
@@ -56,6 +57,42 @@ export default function AnalyticsPage() {
       setError(err.message || "Failed to reach backend API.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteItem = async (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm(`Are you sure you want to delete request transaction #${id}?`)) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/history/${id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete request record.");
+      setHistory(prev => prev.filter(item => item.id !== id));
+      if (selectedItem?.id === id) {
+        setSelectedItem(null);
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to delete request record.");
+    }
+  };
+
+  const handleDeleteOldPrompts = async () => {
+    if (!confirm("Are you sure you want to delete all chat prompts and logs created before today? Only today's records will be kept.")) return;
+    setDeletingOld(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/history/old`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete old prompts.");
+      const data = await res.json();
+      alert(data.message || "Old prompts deleted successfully.");
+      await fetchHistory();
+      setSelectedItem(null);
+    } catch (err: any) {
+      alert(err.message || "Failed to delete old prompts.");
+    } finally {
+      setDeletingOld(false);
     }
   };
 
@@ -112,7 +149,7 @@ export default function AnalyticsPage() {
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8">
       {/* Header */}
-      <div className="flex justify-between items-center border-b border-zinc-800 pb-5">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-zinc-800 pb-5">
         <div>
           <h1 className="text-3xl font-extrabold text-white tracking-tight">System Request History</h1>
           <p className="text-zinc-400 text-sm mt-1">Detailed transaction lists and query metadata inspections</p>

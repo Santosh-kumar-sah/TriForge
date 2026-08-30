@@ -49,11 +49,66 @@ _RESPONSE_CACHE: dict[str, dict] = {}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Utilities
+# Utilities & Persistent Cache
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _hash(text: str) -> str:
     return hashlib.sha256(text.strip().lower().encode("utf-8")).hexdigest()
+
+
+def _get_persistent_cache(prompt: str) -> dict | None:
+    """Checks persistent SQLite cache for existing answer."""
+    try:
+        backend_path = os.path.join(os.path.dirname(__file__), "backend")
+        if backend_path not in sys.path:
+            sys.path.insert(0, backend_path)
+        from app.database.session import SessionLocal
+        from app.cache.smart_cache import SmartCache
+        db = SessionLocal()
+        try:
+            cache = SmartCache()
+            hit, hit_type, score = cache.get(db, prompt)
+            if hit and hit.response_text:
+                return {
+                    "answer": hit.response_text,
+                    "remote_spent": 0,
+                    "local_spent": 0,
+                    "local_saved": (hit.prompt_tokens or 0) + (hit.completion_tokens or 0),
+                    "route": f"CACHE HIT ({hit_type})",
+                }
+        finally:
+            db.close()
+    except Exception:
+        pass
+    return None
+
+
+def _set_persistent_cache(prompt: str, result: dict) -> None:
+    """Stores result in persistent SQLite cache."""
+    try:
+        backend_path = os.path.join(os.path.dirname(__file__), "backend")
+        if backend_path not in sys.path:
+            sys.path.insert(0, backend_path)
+        from app.database.session import SessionLocal
+        from app.cache.smart_cache import SmartCache
+        db = SessionLocal()
+        try:
+            cache = SmartCache()
+            ans = result.get("answer", "")
+            if ans and not cache._is_error_response(ans):
+                cache.set(
+                    db=db,
+                    prompt=prompt,
+                    response_text=ans,
+                    model_name=result.get("route", "agent"),
+                    prompt_tokens=result.get("local_spent", 0) + result.get("remote_spent", 0),
+                    completion_tokens=len(ans.split()),
+                    latency_ms=0.0
+                )
+        finally:
+            db.close()
+    except Exception:
+        pass
 
 
 def _load_env() -> None:
@@ -207,8 +262,16 @@ def run_agent(
     cache_key = _hash(task_text)
     if cache_key in _RESPONSE_CACHE:
         if not silent:
-            print("[CACHE HIT] Returning cached result (0 additional tokens)")
+            print("[CACHE HIT] Returning in-memory cached result (0 additional tokens)")
         return _RESPONSE_CACHE[cache_key]
+
+    # ── LAYER 1.5: Persistent SQLite cache ────────────────────────────────────
+    persistent_cached = _get_persistent_cache(task_text)
+    if persistent_cached:
+        if not silent:
+            print(f"[CACHE HIT] Returning persistent cached result ({persistent_cached['route']}) (0 additional tokens)")
+        _RESPONSE_CACHE[cache_key] = persistent_cached
+        return persistent_cached
 
     # ── LAYER 2: Route decision ───────────────────────────────────────────────
     selected_route, reason = route(task_text)
@@ -349,6 +412,7 @@ def run_agent(
 
     # Cache result for this eval session (zero tokens on repeated queries)
     _RESPONSE_CACHE[cache_key] = result
+    _set_persistent_cache(task_text, result)
     return result
 
 

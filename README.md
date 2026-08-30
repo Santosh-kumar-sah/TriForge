@@ -109,26 +109,19 @@ flowchart TD
     Hit --> Telemetry
 ```
 
----
+## Tech Stack
 
-## 🚀 Key Core Features
+- Backend: Python 3.11, FastAPI, SQLAlchemy, Pydantic Settings, Requests, Uvicorn
+- Frontend: Next.js 16, React 19, TypeScript, Tailwind CSS, Recharts, Framer Motion, Lucide icons
+- Database: SQLite locally, PostgreSQL-compatible `DATABASE_URL` for deployment
+- Providers: Groq by default, with optional OpenAI, Anthropic, and Fireworks support
+- Deployment: Dockerfiles for backend/frontend, `docker-compose.yml`, Render config, Vercel config
 
-### 1. 🧠 Smart Semantic Intent Classifier
-Categorizes queries across **9 distinct intent categories** (`coding`, `math`, `reasoning`, `summarization`, `translation`, `extraction`, `conversation`, `creative_writing`, `general_qa`):
-- **Informational & Simple QA ($\le 15$ words):** Bypasses multi-sample loops, executing in $<300\text{ms}$ with zero remote token spend.
-- **Code Synthesis & Long Context ($\ge 75$ words):** Routes directly to frontier models to ensure high synthesis quality.
+## Setup
 
-### 2. ⚡ 2-Stage Semantic Vector Caching
-Extends beyond exact string matching using a local 128-dimensional vector embedding generator:
-- **Stage 1:** Instant exact SHA-256 string hash lookup ($0\text{ms}$).
-- **Stage 2:** Cosine similarity vector search over recent cache entries using threshold `SEMANTIC_CACHE_THRESHOLD=0.92`.
-- Tracks hit metrics (`EXACT`, `SEMANTIC`, `MISS`) and exposes live performance via `/api/analytics/cache-performance`.
+### 1. Environment
 
-### 3. 📈 Adaptive/Learning Confidence Auto-Tuning
-Maintains a self-improving feedback loop per intent category:
-- Dynamically adjusts per-intent confidence thresholds between `0.50` (safe floor) and `0.95` (safe ceiling).
-- Automatically lowers threshold when local responses require escalation and raises threshold when local draft accuracy is high.
-- Persists state in `router_thresholds` and logs audit events to `router_adjustment_logs`.
+Copy `.env.example` to `.env` and set at least:
 
 ### 4. 🏷️ Explainable Routing Badges
 Renders minimal, interactive routing badges under every response in the Next.js UI:
@@ -218,35 +211,29 @@ TriForge/
 └── README.md
 ```
 
----
+Optional keys:
 
-## 🚀 Quickstart & Setup Guide
+```env
+OPENAI_API_KEY=your_openai_api_key_here
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+FIREWORKS_API_KEY=your_fireworks_api_key_here
+```
 
-### Prerequisites
-- **Python:** 3.11+
-- **Node.js:** 20+
-- **Groq API Key (Free):** Available at [console.groq.com](https://console.groq.com)
-
-### 1. Backend Setup
+### 2. Backend
 
 ```bash
 cd backend
 pip install -r requirements.txt
-```
-
-Copy `.env.example` to `.env` in the root directory:
-```env
-GROQ_API_KEY=gsk_your_groq_api_key_here
-SEMANTIC_CACHE_THRESHOLD=0.92
-ENABLE_ADAPTIVE_TUNING=true
-```
-
-Start the FastAPI backend server:
-```bash
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### 2. Frontend Setup
+Health check:
+
+```bash
+curl http://localhost:8000/health
+```
+
+### 3. Frontend
 
 ```bash
 cd frontend
@@ -254,30 +241,93 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open `http://localhost:3000`.
 
----
-
-## 🐳 Running with Docker
-
-Launch the full stack via Docker Compose:
+### 4. Docker Compose
 
 ```bash
 docker compose up --build
 ```
 
----
+The backend runs on `http://localhost:8000` and the frontend on `http://localhost:3000`.
 
-## 🧪 Testing
+## Demo Instructions
 
-Run the automated backend test suite:
+1. Start the backend and frontend.
+2. Open `http://localhost:3000/chat`.
+3. Try a short factual prompt such as `What is the capital of Japan?`.
+4. Try a coding generation prompt such as `Write a Python function for binary search`.
+5. Repeat a previous prompt to demonstrate exact cache behavior.
+6. Use similar wording for a cached prompt to demonstrate semantic cache behavior.
+7. Open Analytics to inspect route counts, cache rate, latency, cost estimates, and compute backend reporting.
+8. Open Benchmarks and run a sweep only when provider keys and network access are available.
+
+## Benchmarking
+
+Run from the UI on the Benchmarks page, or call:
 
 ```bash
-python -m pytest backend/tests/
+curl -X POST http://localhost:8000/api/benchmark \
+  -H "Content-Type: application/json" \
+  -d "{\"benchmark_name\":\"Demo Sweep\",\"threshold\":0.8}"
 ```
 
----
+Benchmark output is stored in the `benchmarks` table and returned by `/api/benchmarks`. Do not publish benchmark numbers unless you rerun them in the target environment and include the command/configuration used.
 
-## 📄 License
+## Project Structure
 
-Distributed under the MIT License. See `LICENSE` for details.
+```text
+TriForge/
+  backend/
+    app/
+      api/            FastAPI endpoints
+      analytics/      Analytics summaries
+      benchmark/      Three-mode benchmark runner
+      cache/          Exact and semantic cache
+      classifier/     Intent classifier
+      database/       SQLAlchemy models/session/schemas
+      evaluation/     Consistency and hallucination checks
+      providers/      Groq, Fireworks, OpenAI, Anthropic, Ollama providers
+      router/         Routing engine and adaptive threshold tuner
+      security/       PromptGuard and rate limiter
+      utils/          Hardware detection and prompt compression
+    tests/            Pytest suite
+  frontend/
+    src/app/          Next.js pages
+    src/components/   Shared UI components
+    src/lib/          API base URL config
+  positioning/        Supporting positioning notes
+```
+
+## Verification Commands
+
+```bash
+python -m pytest
+cd frontend
+npm run lint
+npm run build
+```
+
+Verified in this workspace:
+
+- `python -m pytest`: 13 passed, 1 warning
+- `npm run lint`: passed with warnings
+- `npm run build`: passed when run outside the sandbox; the sandboxed run reached TypeScript and failed with Windows `spawn EPERM`
+
+## Security Notes
+
+- `.env` is ignored.
+- `.env.example` contains placeholders only.
+- Provider error messages are sanitized before logging/returning.
+- Settings API masks stored keys in responses.
+- Source scan found no obvious committed API key patterns.
+- `backend/triforge.db` is tracked and should be removed from version control before public release if it may contain real prompts or demo data.
+
+## Roadmap
+
+- Wire `LocalOllamaProvider` or another on-device provider into the main local execution path.
+- Use verify-draft in the main chat escalation path, not only the benchmark runner.
+- Add isolated integration tests for PromptGuard, rate limiting, provider failover, analytics, and benchmark persistence.
+- Remove tracked SQLite databases from the repository and keep only schema/migration or seed fixtures.
+- Tighten frontend TypeScript types and clean remaining lint warnings.
+- Add deployment-specific configuration for production CORS and persistent database storage.
